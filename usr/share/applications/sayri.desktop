@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Sayri
+GenericName=Voice Assistant
+Comment=Siri-like AI voice assistant
+Exec=/usr/bin/sayri
+Icon=sayri
+Terminal=false
+Categories=Utility;AudioVideo;
+Keywords=voice;assistant;siri;ai;speech;whisper;piper;
+StartupNotify=false
+StartupWMClass=sayri

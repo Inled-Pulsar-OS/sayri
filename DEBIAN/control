@@ -1,0 +1,24 @@
+Package: sayri
+Version: 0.1.3
+Section: utils
+Priority: optional
+Architecture: all
+Maintainer: Jaime <info@inled.es>
+Depends: python3, python3-gi, gir1.2-gtk-4.0, gir1.2-webkit-6.0, libgtk4-layer-shell0, python3-httpx, pipewire
+Suggests: whisper.cpp, grim, ydotool
+Description: Siri-like voice assistant for Pulsar OS (GTK4).
+ Sayri is an always-available Siri-style assistant. A reactive orb pinned to
+ the top-left corner of the screen reacts to your voice: whisper.cpp
+ transcribes what you say, the text appears in an Apple-intelligence style
+ cajita (with a chroma-ring animated border) right next to the orb, and when
+ you pause (or press Enter) the query is sent to any OpenAI-compatible API
+ (OpenAI, Ollama, LM Studio, OpenClaw, ...). The answer is spoken back with
+ Piper TTS while the orb animates.
+ .
+ Clicking the orb toggles the microphone on/off; the cajita is also the text
+ input and shows settings/quit. A GTK4 settings window downloads whisper.cpp
+ models and Piper voices per language and configures the provider (endpoint,
+ key, model, ...).
+ .
+ whisper.cpp and Piper binaries are detected on PATH; if missing, the
+ settings window can download static builds and models on first use.

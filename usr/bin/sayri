@@ -1,0 +1,69 @@
+#!/bin/bash
+# ==============================================================================
+# Sayri - Siri-like voice assistant for Pulsar OS
+# ==============================================================================
+# Wrapper so the Python app can live in /usr/share/sayri/lib.
+#
+# Why LD_PRELOAD: Sayri pins its overlay windows with gtk4-layer-shell (GTK4
+# has no window positioning / always-on-top). On Wayland, WebKit's own
+# libwayland-client can mask gtk4-layer-shell's unless layer-shell is linked
+# BEFORE it, which makes the orb/cajita WebView flaky. Preloading the library
+# fixes that deterministically (see https://github.com/wmww/gtk4-layer-shell
+# linking docs).
+#
+# Env overrides (useful for development):
+#   SAYRI_PYTHONPATH  -> directory with the sayri Python package
+#   SAYRI_DATA_DIR    -> directory with the web build (default /usr/share/sayri/web)
+#   SAYRI_CONFIG_DIR  -> config directory (default ~/.config/sayri)
+#   SAYRI_STATE_DIR   -> state directory for models/voices (default ~/.local/share/sayri)
+#   SAYRI_SKIP_PRELOAD=1 -> do not set LD_PRELOAD (e.g. when already set)
+
+if [ -z "$SAYRI_PYTHONPATH" ]; then
+    _script_dir="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+    if [ -d "$_script_dir/../share/sayri/lib" ]; then
+        SAYRI_PYTHONPATH="$_script_dir/../share/sayri/lib"
+    else
+        SAYRI_PYTHONPATH="/usr/share/sayri/lib"
+    fi
+fi
+
+# Preload gtk4-layer-shell so its libwayland-client wins over WebKit's.
+if [ "${SAYRI_SKIP_PRELOAD:-0}" != "1" ]; then
+    case ":${LD_PRELOAD:-}:" in
+        *gtk4-layer-shell*) ;;                         # already preloaded
+        *)
+            _ls_lib=""
+            for _p in /usr/lib/libgtk4-layer-shell.so \
+                      /usr/lib64/libgtk4-layer-shell.so \
+                      /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so \
+                      /usr/lib/aarch64-linux-gnu/libgtk4-layer-shell.so; do
+                if [ -e "$_p" ]; then _ls_lib="$_p"; break; fi
+            done
+            if [ -z "$_ls_lib" ]; then
+                # fall back to the versioned soname from ldconfig
+                _ls_lib="$(ldconfig -p 2>/dev/null | awk '/libgtk4-layer-shell\.so\./{print $NF; exit}')"
+            fi
+            if [ -n "$_ls_lib" ]; then
+                export LD_PRELOAD="$_ls_lib${LD_PRELOAD:+:$LD_PRELOAD}"
+            fi
+            ;;
+    esac
+fi
+
+export PYTHONPATH="$SAYRI_PYTHONPATH${PYTHONPATH:+:$PYTHONPATH}"
+
+if [ -z "$GDK_BACKEND" ] && [ -n "$DISPLAY" ]; then
+    export GDK_BACKEND="x11,wayland"
+fi
+
+if [ "$1" = "skills" ]; then
+    shift
+    exec python3 -m sayri.skills "$@"
+fi
+
+if [ "$1" = "screenshot" ]; then
+    shift
+    exec python3 -m sayri.screenshot "$@"
+fi
+
+exec python3 -m sayri "$@"

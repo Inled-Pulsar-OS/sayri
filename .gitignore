@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# Expo / Node (orb source; the static build in usr/share/sayri/web is committed)
+web/node_modules/
+web/.expo/
+web/package-lock.json
+
+# Staging
+.sayri-web-tmp/

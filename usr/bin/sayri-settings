@@ -1,0 +1,6 @@
+#!/bin/bash
+if [ -z "$SAYRI_PYTHONPATH" ]; then
+    SAYRI_PYTHONPATH="/usr/share/sayri/lib"
+fi
+export PYTHONPATH="$SAYRI_PYTHONPATH${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m sayri.settings_gtk3 "$@"
