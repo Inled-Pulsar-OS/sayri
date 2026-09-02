@@ -699,10 +699,10 @@ class SettingsWindow:
         self._switch_row(card, "Launch at Login", "Start Sayri automatically when logging in", "ui", "autostart")
 
     def _build_agents_tab(self) -> None:
-        page = self._page_scrolled("Subagentes & Seguridad", "agents")
+        page = self._page_scrolled("Sub-Agents & Security", "agents")
 
-        # ── Card 1: Subagente Activo ──
-        c1 = self._card(page, "Subagente Activo y Nivel de Aislamiento")
+        # ── Card 1: Active Sub-Agent ──
+        c1 = self._card(page, "Active Sub-Agent and Isolation Level")
         from sayri.domain.agent_creator import AgentCreator
         from sayri.adapters.sandbox.executor import SandboxExecutor
         
@@ -711,10 +711,10 @@ class SettingsWindow:
         for a in agents:
             self.agent_combo.append(a.id, f"{a.name} ({a.sandbox.level.value})")
         self.agent_combo.set_active(0)
-        self._row(c1, "Perfil Activo", "Selecciona el subagente para atender consultas", self.agent_combo)
+        self._row(c1, "Active Profile", "Select the sub-agent to handle queries", self.agent_combo)
 
-        # ── Card 2: Lista de Subagentes ──
-        c2 = self._card(page, "Subagentes Registrados en Pulsar OS")
+        # ── Card 2: Registered Sub-Agents ──
+        c2 = self._card(page, "Registered Sub-Agents in Pulsar OS")
         for a in agents:
             lvl_color = "#22c55e" if a.sandbox.level.value == "LEVEL_0_NO_EXEC" else "#38bdf8"
             lbl = Gtk.Label()
@@ -727,17 +727,17 @@ class SettingsWindow:
             lbl.set_wrap(True)
             c2.append(lbl)
 
-        # ── Card 3: Estado de Seguridad ──
-        c3 = self._card(page, "Escudo de Seguridad y Sandboxing")
+        # ── Card 3: Security Status ──
+        c3 = self._card(page, "Security Shield and Sandboxing")
         bwrap_ok = SandboxExecutor().bwrap_available
-        bwrap_lbl = Gtk.Label(label="Activo ✓ (bwrap kernel sandboxing)" if bwrap_ok else "No instalado (modo host)")
+        bwrap_lbl = Gtk.Label(label="Active ✓ (bwrap kernel sandboxing)" if bwrap_ok else "Not installed (host mode)")
         bwrap_lbl.add_css_class("sayri-status-ok" if bwrap_ok else "sayri-status-err")
-        self._row(c3, "Motor Bubblewrap (bwrap)", "Aislamiento de procesos y sistema de archivos", bwrap_lbl)
+        self._row(c3, "Bubblewrap Engine (bwrap)", "Process and filesystem isolation", bwrap_lbl)
 
-        shield_lbl = Gtk.Label(label="Activo ✓ (Zero Token Drain)")
+        shield_lbl = Gtk.Label(label="Active ✓ (Zero Token Drain)")
         shield_lbl.add_css_class("sayri-status-ok")
-        self._row(c3, "Escudo de Tokens Remoto", "Rechazo de mensajes no autorizados en gateways", shield_lbl)
+        self._row(c3, "Remote Token Shield", "Rejection of unauthorized messages on gateways", shield_lbl)
 
-        audit_lbl = Gtk.Label(label="Activo ✓ (Escaneo AST/Regex)")
+        audit_lbl = Gtk.Label(label="Active ✓ (AST/Regex Scan)")
         audit_lbl.add_css_class("sayri-status-ok")
-        self._row(c3, "Auditor Pre-Flight ClawHub", "Análisis estático de seguridad antes de instalar skills", audit_lbl)
+        self._row(c3, "ClawHub Pre-Flight Auditor", "Static security analysis before installing skills", audit_lbl)

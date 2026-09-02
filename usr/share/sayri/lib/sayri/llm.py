@@ -20,7 +20,7 @@ def _httpx():
         return httpx
     except ImportError as exc:
         raise LLMError(
-            "Falta el módulo python3-httpx. Instálalo con: "
+            "The python3-httpx module is missing. Install it with: "
             "sudo apt install python3-httpx"
         ) from exc
 

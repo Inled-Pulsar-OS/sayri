@@ -80,7 +80,7 @@ def pin_layer_shell(win: Gtk.Window, *, top_margin: int = 12,
         LayerShell.set_keyboard_mode(win, LayerShell.KeyboardMode.ON_DEMAND)
         return True
     except Exception as exc:  # noqa: BLE001
-        print(f"[sayri] layering no aplicable: {exc}")
+        print(f"[sayri] layering not applicable: {exc}")
         return False
 
 
@@ -159,7 +159,7 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
         ]
         libx11.XSendEvent.restype = ctypes.c_int
     except Exception as exc:  # noqa: BLE001
-        print(f"[sayri] aviso: libX11 no disponible: {exc}")
+        print(f"[sayri] warning: libX11 not available: {exc}")
         return False
 
     def _apply_position(*_args) -> None:
@@ -279,7 +279,7 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
             libx11.XFlush(dpy)
             libx11.XCloseDisplay(dpy)
         except Exception as exc:  # noqa: BLE001
-            print(f"[sayri] aviso al posicionar ventana X11: {exc}")
+            print(f"[sayri] warning while positioning X11 window: {exc}")
 
     win.connect("realize", lambda *_: GLib.idle_add(_apply_position))
     win.connect("map", lambda *_: (GLib.idle_add(_apply_position), GLib.timeout_add(100, _apply_position)))
@@ -386,8 +386,8 @@ def _serve_uri(request: WebKit.URISchemeRequest) -> None:
             request.finish(stream, len(body), ctype)
             return
         except Exception as exc:  # noqa: BLE001
-            print(f"[sayri] error sirviendo {uri}: {exc}")
-    print(f"[sayri] 404 No encontrado: {uri} (buscado en {full})")
+            print(f"[sayri] error serving {uri}: {exc}")
+    print(f"[sayri] 404 Not Found: {uri} (searched in {full})")
     request.finish_error(
         GLib.Error.new_literal(GLib.quark_from_string("sayri"), f"not found: {path}", 404)
     )
@@ -501,7 +501,7 @@ class WebWindow:
             self._pending_state = []
             self.on_ready()
         elif kind == "error":
-            print(f"[sayri] error JS en {self.mode}: {msg.get('message')}")
+            print(f"[sayri] JS error in {self.mode}: {msg.get('message')}")
         else:
             self.on_host_message(msg)
 
@@ -523,23 +523,23 @@ class WebWindow:
     def _on_crash(self, _web, event) -> None:
         reason = self._TERMINATION.get(int(event), str(event))
         print(
-            "[sayri] aviso: el proceso web de WebKit terminó "
-            f"({reason}). Si {self.mode} no aparece, prueba a ejecutar con "
-            "WEBKIT_DISABLE_DMABUF_RENDERER=1 o WEBKIT_DISABLE_COMPOSITING_MODE=1."
+            "[sayri] warning: the WebKit web process terminated "
+            f"({reason}). If {self.mode} does not appear, try running with "
+            "WEBKIT_DISABLE_DMABUF_RENDERER=1 or WEBKIT_DISABLE_COMPOSITING_MODE=1."
         )
         GLib.timeout_add(1000, self.web.reload)
 
     def _on_load_failed(self, _web, _event, uri, err) -> bool:
-        print(f"[sayri] no se pudo cargar {uri}: {err.message}")
+        print(f"[sayri] could not load {uri}: {err.message}")
         return True
 
     def _warn_if_not_ready(self) -> bool:
         if not self._ready:
             print(
-                "[sayri] aviso: la ventana " + self.mode +
-                " no ha cargado en 15 s. Revisa que SAYRI_DATA_DIR apunte al "
-                "build web y que WebKitGTK funcione "
-                "(prueba WEBKIT_DISABLE_COMPOSITING_MODE=1)."
+                "[sayri] warning: the " + self.mode +
+                " window did not load within 15 s. Check that SAYRI_DATA_DIR points to the "
+                "web build and that WebKitGTK works "
+                "(try WEBKIT_DISABLE_COMPOSITING_MODE=1)."
             )
             self._warned = True
         return False

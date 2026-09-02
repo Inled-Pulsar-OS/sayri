@@ -47,9 +47,9 @@ class TTSEngine:
     def missing(self) -> list[str]:
         out = []
         if not self.binary:
-            out.append("binario piper")
+            out.append("piper binary")
         if self.voice_files is None:
-            out.append("voz piper")
+            out.append("piper voice")
         return out
 
     # ------------------------------------------------------------ speak
@@ -71,7 +71,7 @@ class TTSEngine:
         voices = self.voice_files
         if not binary or not voices:
             if on_error:
-                on_error(RuntimeError("Piper o la voz no está instalada"))
+                on_error(RuntimeError("Piper or the voice is not installed"))
             return
 
         onnx, json_path = voices

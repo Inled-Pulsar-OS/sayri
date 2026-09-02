@@ -9,19 +9,19 @@ from typing import List
 from sayri.domain.models import SecurityAuditReport
 
 DANGEROUS_PATTERNS = [
-    (r"curl\s+[^\|]+\|\s*(?:bash|sh|zsh)", "Descarga y ejecución remota de scripts (curl | bash)", 80),
-    (r"wget\s+[^\|]+\|\s*(?:bash|sh|zsh)", "Descarga y ejecución remota de scripts (wget | bash)", 80),
-    (r"eval\s*\$\([^\)]+\)", "Ejecución dinámica no verificada con eval", 60),
-    (r"base64\s+(?:-d|--decode)\s*\|\s*(?:bash|sh)", "Ofuscación de código en Base64", 90),
-    (r"nc\s+-[a-zA-Z0-9]*e\s+/bin/(?:bash|sh)", "Reverse Shell / Puerta trasera con Netcat", 100),
-    (r"(?:python|python3)\s+-c\s+['\"].*socket.*subprocess.*['\"]", "Reverse Shell en Python", 100),
-    (r"rm\s+-rf\s+/(?:$|\s+|\*)", "Intento de borrado destructivo de la raíz del sistema (rm -rf /)", 100),
-    (r"mkfs\.(?:ext4|vfat|btrfs)", "Formateo de particiones de disco", 95),
-    (r"dd\s+if=\S+\s+of=/dev/\S+", "Escritura cruda sobre dispositivos de bloque /dev/", 95),
-    (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "Bomba Fork / Ataque de agotamiento de recursos", 90),
-    (r"~/\.ssh/(?:id_rsa|authorized_keys|id_ed25519)", "Acceso o exfiltración de claves privadas SSH", 85),
-    (r"~/\.gnupg/", "Acceso a claves privadas GPG", 85),
-    (r"(?:OPENAI|ANTHROPIC|MISTRAL|DEEPSEEK|GROQ)_API_KEY", "Intento de lectura directa de variables de entorno de API Keys", 75),
+    (r"curl\s+[^\|]+\|\s*(?:bash|sh|zsh)", "Remote download and execution of scripts (curl | bash)", 80),
+    (r"wget\s+[^\|]+\|\s*(?:bash|sh|zsh)", "Remote download and execution of scripts (wget | bash)", 80),
+    (r"eval\s*\$\([^\)]+\)", "Unverified dynamic execution with eval", 60),
+    (r"base64\s+(?:-d|--decode)\s*\|\s*(?:bash|sh)", "Base64 code obfuscation", 90),
+    (r"nc\s+-[a-zA-Z0-9]*e\s+/bin/(?:bash|sh)", "Reverse Shell / backdoor with Netcat", 100),
+    (r"(?:python|python3)\s+-c\s+['\"].*socket.*subprocess.*['\"]", "Reverse Shell in Python", 100),
+    (r"rm\s+-rf\s+/(?:$|\s+|\*)", "Destructive deletion attempt of system root (rm -rf /)", 100),
+    (r"mkfs\.(?:ext4|vfat|btrfs)", "Disk partition formatting", 95),
+    (r"dd\s+if=\S+\s+of=/dev/\S+", "Raw write to /dev/ block devices", 95),
+    (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "Fork Bomb / resource exhaustion attack", 90),
+    (r"~/\.ssh/(?:id_rsa|authorized_keys|id_ed25519)", "Access to or exfiltration of private SSH keys", 85),
+    (r"~/\.gnupg/", "Access to private GPG keys", 85),
+    (r"(?:OPENAI|ANTHROPIC|MISTRAL|DEEPSEEK|GROQ)_API_KEY", "Attempt to read API Key environment variables directly", 75),
 ]
 
 
@@ -67,7 +67,7 @@ class SkillsScanner:
                 target_type="skill",
                 is_safe=False,
                 risk_score=100,
-                warnings=["El archivo de la habilidad no existe."],
+                warnings=["The skill file does not exist."],
                 recommendation="BLOCK",
             )
         try:
@@ -80,6 +80,6 @@ class SkillsScanner:
                 target_type="skill",
                 is_safe=False,
                 risk_score=100,
-                warnings=[f"Error al leer archivo: {exc}"],
+                warnings=[f"Error reading file: {exc}"],
                 recommendation="BLOCK",
             )

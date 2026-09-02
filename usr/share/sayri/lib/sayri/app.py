@@ -124,27 +124,27 @@ def _get_effective_system_prompt(cfg) -> str:
     user_f = paths.user_file()
     skills_d = paths.skills_dir()
     return (
-        f"Eres Sayri, la asistente inteligente de voz y agente autónomo integrado en Pulsar OS (basado en {distro}).\n"
-        f"El usuario actual del sistema es '{username}'. Su perfil y datos están en `{user_f}`.\n"
-        f"Tu memoria a largo plazo de recuerdos y preferencias se encuentra en `{mem_file}` (puedes leerla o añadir notas con bash).\n"
-        f"Tus habilidades (skills) instaladas de ClawHub/OpenClaw están en `{skills_d}`. Puedes listar tus habilidades con `ls {skills_d}` y leer sus guías con `cat {skills_d}/<skill>/SKILL.md`.\n"
-        "Puedes buscar o descargar nuevas habilidades de ClawHub (https://clawhub.ai) usando el comando `sayri-skills install <skill-name>` o `sayri-skills search <query>`.\n"
-        "Para capturar la pantalla, puedes usar el comando `sayri screenshot [ruta_destino]` o portales de GNOME.\n"
-        "Para tareas que requieran privilegios de administrador / root (instalar o actualizar paquetes del sistema con pacman, modificar /etc, systemctl del sistema), usa siempre `pkexec <comando>`.\n"
-        "El sistema interceptará la elevación y solicitará confirmación gráfica al usuario mediante Polkit antes de proceder.\n\n"
-        "FLUJO AGÉNTICO AUTÓNOMO:\n"
-        "Cuando el usuario te pida una tarea, abrir aplicaciones, modificar ajustes o consultar datos, DEBES usar EXACTAMENTE este formato para emitir comandos:\n\n"
+        f"You are Sayri, the intelligent voice assistant and autonomous agent integrated into Pulsar OS (based on {distro}).\n"
+        f"The current system user is '{username}'. Their profile and data are in `{user_f}`.\n"
+        f"Your long-term memory of memories and preferences is in `{mem_file}` (you can read it or add notes with bash).\n"
+        f"Your installed ClawHub/OpenClaw skills are in `{skills_d}`. You can list your skills with `ls {skills_d}` and read their guides with `cat {skills_d}/<skill>/SKILL.md`.\n"
+        "You can search for or download new skills from ClawHub (https://clawhub.ai) using the `sayri-skills install <skill-name>` or `sayri-skills search <query>` command.\n"
+        "To capture the screen, you can use the `sayri screenshot [destination_path]` command or GNOME portals.\n"
+        "For tasks requiring administrator/root privileges (installing or updating system packages with pacman, modifying /etc, system systemctl), always use `pkexec <command>`.\n"
+        "The system will intercept elevation and request graphical confirmation from the user via Polkit before proceeding.\n\n"
+        "AUTONOMOUS AGENTIC FLOW:\n"
+        "When the user asks you a task, to open applications, change settings or query data, you MUST use EXACTLY this format to issue commands:\n\n"
         "```bash\n"
-        "<comando bash>\n"
+        "<bash command>\n"
         "```\n\n"
-        "REGLAS CRÍTICAS (no las incumplas):\n"
-        "1. SIEMPRE usa bloques de código markdown con 'bash' después de las triples comillas: \"```bash\".\n"
-        "2. NUNCA uses etiquetas XML como <bash>, <sh>, <tool>, etc.\n"
-        "3. Un bloque bash contiene UN SOLO comando. No metas múltiples comandos separados por punto y coma.\n"
-        "4. Primero responde con una frase breve describiendo qué vas a hacer, Y LUEGO el bloque bash.\n"
-        "5. Si necesitas ejecutar varios pasos, hazlo en turnos separados: un bloque por turno.\n\n"
-        "Ejecutarás comandos de forma interactiva. Si un comando falla o necesitas más pasos, recibirás el código de salida y error en el siguiente turno y podrás emitir nuevos comandos bash para corregir el error hasta lograr el objetivo.\n"
-        "Responde siempre de forma natural, concisa y agradable (1 a 3 frases habladas para voz)."
+        "CRITICAL RULES (do not break them):\n"
+        "1. ALWAYS use markdown code blocks with 'bash' after the triple backticks: \"```bash\".\n"
+        "2. NEVER use XML tags such as <bash>, <sh>, <tool>, etc.\n"
+        "3. A bash block contains ONLY ONE command. Do not put multiple commands separated by semicolons.\n"
+        "4. First reply with a short sentence describing what you are going to do, THEN the bash block.\n"
+        "5. If you need to run several steps, do it in separate turns: one block per turn.\n\n"
+        "You will run commands interactively. If a command fails or you need more steps, you will receive the exit code and error in the next turn and you can issue new bash commands to correct the error until you achieve the goal.\n"
+        "Always respond naturally, concisely and pleasantly (1 to 3 spoken sentences for voice)."
     )
 
 
@@ -165,6 +165,7 @@ class SayriApp(Gtk.Application):
         self.armed = False
         self._busy = False
         self._mic_on = False
+        self._setup_needed = False
         self.session = None
         self._assistant_text = ""
         self._current_query_id = 0
@@ -181,9 +182,9 @@ class SayriApp(Gtk.Application):
         self.triggers = TriggerEngine()
         self.active_agent: AgentProfile = AgentCreator.get_agent("default") or AgentProfile(
             id="default",
-            name="Sayri Principal",
-            description="Asistente de sistema operativo para Pulsar OS",
-            system_prompt="Eres Sayri, la asistente inteligente de Pulsar OS.",
+            name="Main Sayri",
+            description="Operating system assistant for Pulsar OS",
+            system_prompt="You are Sayri, the intelligent assistant of Pulsar OS.",
         )
         self.active_session_id = self.storage.create_session(agent_id=self.active_agent.id).id
 
@@ -205,7 +206,7 @@ class SayriApp(Gtk.Application):
             self.overlay.cajita.entry.set_text("")
             self.overlay.cajita.card_overlay.set_visible(False)
             self.overlay.cajita.update_agent_badge(self.active_agent.name, self.active_agent.sandbox.level.value)
-        self._msg("hint", "✨ Nueva conversación iniciada.")
+        self._msg("hint", "✨ New conversation started.")
         sound.play("activate")
         print(f"[Sayri] ✨ Started new conversation session: {self.active_session_id}")
 
@@ -252,18 +253,11 @@ class SayriApp(Gtk.Application):
         # Check if first run or no AI provider configured
         has_api_key = bool(self.cfg.get_string("provider", "api_key").strip())
         is_first_run = getattr(self.cfg, "_is_first_run", False) or not has_api_key
+        self._setup_needed = is_first_run or not has_api_key
 
         if is_first_run or not has_api_key:
+            self._show_setup_prompt()
             self.overlay.show()
-            welcome_msg = (
-                "👋 **Welcome to Sayri!**\n\n"
-                "To get started, please configure an **AI Provider**:\n"
-                "• Click the **Sayri logo** on the left of the input bar (or ⚙) to open **Settings**.\n"
-                "• Select a provider and add your API key (OpenAI, Anthropic, Groq, OpenRouter, or Ollama).\n"
-                "• In Settings, you can also download local **Speech-to-Text (STT)** and **Text-to-Speech (TTS)** models for voice interaction."
-            )
-            self._set_assistant(welcome_msg)
-            self._msg("hint", "Click the Sayri logo on the left to set up AI Provider & Voice")
         else:
             if not self.is_autostart:
                 self.overlay.show()
@@ -440,12 +434,12 @@ class SayriApp(Gtk.Application):
             if result_holder["text"]:
                 return result_holder["text"].strip()
             if result_holder["error"]:
-                return f"⚠️ Error de Sayri: {result_holder['error']}"
+                return f"⚠️ Sayri Error: {result_holder['error']}"
         except Exception as exc:
             print(f"[Sayri Remote] Engine error: {exc}")
-            return f"⚠️ Error procesando mensaje: {exc}"
+            return f"⚠️ Error processing message: {exc}"
 
-        return result_holder["text"].strip() or f"Hola {author}, recibí tu mensaje: '{text}'."
+        return result_holder["text"].strip() or f"Hi {author}, I received your message: '{text}'."
 
     def toggle_visible(self) -> None:
         if self.overlay:
@@ -454,6 +448,14 @@ class SayriApp(Gtk.Application):
     def on_shown(self) -> None:
         """Called when Sayri is shown: clean UI, play activation sound, and start listening."""
         print("[Sayri] Overlay shown: cleaning UI and playing activation sound.")
+        if self._setup_needed:
+            # Setup not finished yet: keep the setup message visible and do not
+            # wipe it or start listening until an AI provider is configured.
+            # Re-show the welcome so reopening from the appindicator keeps it.
+            self._show_setup_prompt()
+            if self.overlay:
+                self.overlay.cajita.card_overlay.set_visible(True)
+            return
         self._current_query_id += 1
         self.tts.cancel()
         sound.stop_all()
@@ -538,6 +540,23 @@ class SayriApp(Gtk.Application):
     def _set_assistant(self, text: str) -> None:
         if self.overlay:
             self.overlay.set_content("assistant", text)
+
+    def _show_setup_prompt(self) -> None:
+        """Show the setup / welcome message when no AI provider is configured.
+
+        Called both on first activation and every time the overlay is shown
+        again (e.g. reopened from the appindicator) so that the setup reminder
+        stays visible until an API key is configured.
+        """
+        welcome_msg = (
+            "👋 **Welcome to Sayri!**\n\n"
+            "To get started, please configure an **AI Provider**:\n"
+            "• Click the **Sayri logo** on the left of the input bar (or ⚙) to open **Settings**.\n"
+            "• Select a provider and add your API key (OpenAI, Anthropic, Groq, OpenRouter, or Ollama).\n"
+            "• In Settings, you can also download local **Speech-to-Text (STT)** and **Text-to-Speech (TTS)** models for voice interaction."
+        )
+        self._set_assistant(welcome_msg)
+        self._msg("hint", "Click the Sayri logo on the left to set up AI Provider & Voice")
 
     def _set_partial(self, text: str) -> None:
         if self.overlay:
@@ -751,6 +770,9 @@ class SayriApp(Gtk.Application):
             "hey zairi", "oye zairi", "zairi",
             "hey saydy", "oye saydy", "saydy",
             "hey say", "oye say", "hola say",
+            "hello sayri", "hi sayri", "okay sayri",
+            "hello sairi", "hi sairi",
+            "hello siri", "hi siri",
         ])
 
         # Convert spaces to flexible \s+
@@ -799,7 +821,7 @@ class SayriApp(Gtk.Application):
             cfg=self.cfg,
             on_delta=lambda d: GLib.idle_add(self._on_delta, d, query_id),
             on_done=lambda full: GLib.idle_add(self._finish_engine_reply, full, query_id),
-            on_tool_start=lambda cmd: GLib.idle_add(self._msg, "hint", f"⚙️ Ejecutando: {cmd[:36]}…"),
+            on_tool_start=lambda cmd: GLib.idle_add(self._msg, "hint", f"⚙️ Running: {cmd[:36]}…"),
             on_tool_finish=lambda cmd, out, code: GLib.idle_add(
                 lambda: self.overlay and self.overlay.cajita.set_tool_output(cmd, out)
             ),
@@ -856,7 +878,7 @@ class SayriApp(Gtk.Application):
                 cmd = m.group(1).strip()
                 if cmd:
                     print(f"[Sayri] ⚙️ Agent step {depth} executing: `{cmd}`")
-                    self._msg("hint", f"⚙️ Ejecutando ({depth}): {cmd[:36]}…")
+                    self._msg("hint", f"⚙️ Running ({depth}): {cmd[:36]}…")
                     threading.Thread(target=self._execute_tool_and_followup,
                                      args=(messages, full, cmd, depth, query_id), daemon=True).start()
                     return
@@ -877,14 +899,14 @@ class SayriApp(Gtk.Application):
         if is_elevated:
             if raw_cmd.startswith("sudo "):
                 cmd = "pkexec " + raw_cmd[5:]
-            self._msg("hint", f"🔒 Solicitando autorización: {cmd[:30]}…")
+            self._msg("hint", f"🔒 Requesting authorization: {cmd[:30]}…")
 
         try:
             res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=4)
             output = (res.stdout + "\n" + res.stderr).strip()
             retcode = res.returncode
             if retcode in (126, 127) and is_elevated:
-                output = "El usuario canceló o denegó la autorización de administrador (Polkit)."
+                output = "The user cancelled or denied the administrator authorization (Polkit)."
             elif not output:
                 output = f"(Command exited with code {res.returncode})"
         except subprocess.TimeoutExpired as exc:
@@ -896,7 +918,7 @@ class SayriApp(Gtk.Application):
             if exc.stderr:
                 partial_out += "\n" + (exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr))
             partial_out = partial_out.strip()
-            output = partial_out or "(Comando iniciado con éxito y ejecutándose en segundo plano)"
+            output = partial_out or "(Command launched successfully and running in the background)"
             retcode = 0
             print(f"[Sayri] ⏱️ Tool step {depth} exceeded 4s (GUI app / xdg-open); continuing model immediately.")
         except Exception as exc:
@@ -1043,6 +1065,13 @@ class SayriApp(Gtk.Application):
                 self.apply_ui_config()
         elif group == "stt" and key == "mode":
             self._apply_mode()
+        elif group == "provider" and key == "api_key":
+            # Setup (first-run welcome) is done once an AI provider key is set.
+            has_key = bool(self.cfg.get_string("provider", "api_key").strip())
+            if self._setup_needed and has_key:
+                self._setup_needed = False
+                self._set_busy(False)
+                self._after_reply()
 
     # ── shutdown
     def quit_app(self) -> None:
@@ -1113,7 +1142,7 @@ def main() -> int:
     if is_quit:
         return 0
 
-    # Filter out custom CLI arguments so Gtk.Application argument parser does not fail with "Opción desconocida"
+    # Filter out custom CLI arguments so Gtk.Application argument parser does not fail with "No such option"
     filtered_argv = [sys.argv[0]]
     for a in sys.argv[1:]:
         if a not in ("--autostart", "--toggle", "-t", "--show", "--hide", "--settings", "-s", "--quit", "-q"):
@@ -1127,5 +1156,5 @@ def main() -> int:
         except ValueError:
             pass
     code = app.run(filtered_argv)
-    print(f"[sayri] run() terminó con código {code}")
+    print(f"[sayri] run() finished with code {code}")
     return code

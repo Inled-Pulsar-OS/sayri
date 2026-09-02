@@ -41,8 +41,8 @@ class SandboxExecutor:
         if config.level == SandboxLevel.LEVEL_0_NO_EXEC:
             return (
                 126,
-                "Error de seguridad (LEVEL_0_NO_EXEC): Este subagente tiene el nivel LEVEL_0_NO_EXEC configurado. "
-                "No tiene permisos para ejecutar comandos en el sistema.",
+                "Security error (LEVEL_0_NO_EXEC): This sub-agent has the LEVEL_0_NO_EXEC level configured. "
+                "It has no permissions to execute commands on the system.",
                 0.0,
             )
 
@@ -50,8 +50,8 @@ class SandboxExecutor:
         if ("sudo " in raw_cmd or "pkexec " in raw_cmd or raw_cmd.startswith("su ") or " su " in raw_cmd) and config.level != SandboxLevel.LEVEL_4_HOST_ROOT:
             return (
                 126,
-                f"Error de seguridad: Intento de escalada de privilegios bloqueado. "
-                f"El nivel de sandbox '{config.level.value}' no permite elevación administrativa (sudo/pkexec).",
+                f"Security error: Privilege escalation attempt blocked. "
+                f"The sandbox level '{config.level.value}' does not allow administrative elevation (sudo/pkexec).",
                 0.0,
             )
 
@@ -64,7 +64,7 @@ class SandboxExecutor:
                 if b in cmd_words or f"/{b}" in raw_cmd:
                     return (
                         126,
-                        f"Error de seguridad: La herramienta interna de gestión '{b}' está bloqueada en el sandbox '{config.level.value}' para evitar escalada de privilegios.",
+                        f"Security error: The internal management tool '{b}' is blocked in the sandbox '{config.level.value}' to prevent privilege escalation.",
                         0.0,
                     )
 
@@ -73,7 +73,7 @@ class SandboxExecutor:
             if blocked in raw_cmd.split():
                 return (
                     126,
-                    f"Error de seguridad: El comando '{blocked}' está explícitamente bloqueado en la política del agente.",
+                    f"Security error: The command '{blocked}' is explicitly blocked in the agent's policy.",
                     0.0,
                 )
 
@@ -117,10 +117,10 @@ class SandboxExecutor:
                 )
                 time.sleep(0.1)
                 duration = (time.monotonic() - start_time) * 1000.0
-                return (0, f"Comando lanzado en segundo plano en el host (PID: {proc.pid})", duration)
+                return (0, f"Command launched in background on the host (PID: {proc.pid})", duration)
             except Exception as exc:
                 duration = (time.monotonic() - start_time) * 1000.0
-                return (1, f"Error iniciando proceso en segundo plano: {exc}", duration)
+                return (1, f"Error starting background process: {exc}", duration)
 
         try:
             res = subprocess.run(
@@ -134,9 +134,9 @@ class SandboxExecutor:
             out = (res.stdout + "\n" + res.stderr).strip()
             retcode = res.returncode
             if retcode in (126, 127) and elevated:
-                out = "El usuario canceló o denegó la autorización gráfica de administrador (Polkit)."
+                out = "The user cancelled or denied the graphical administrator authorization (Polkit)."
             elif not out:
-                out = f"(Comando completado con código de salida {res.returncode})"
+                out = f"(Command completed with exit code {res.returncode})"
             duration = (time.monotonic() - start_time) * 1000.0
             return (retcode, out, duration)
         except subprocess.TimeoutExpired as exc:
@@ -146,12 +146,12 @@ class SandboxExecutor:
             duration = (time.monotonic() - start_time) * 1000.0
             return (
                 0,
-                partial or "(El comando continúa ejecutándose en segundo plano en el host)",
+                partial or "(The command continues running in the background on the host)",
                 duration,
             )
         except Exception as exc:
             duration = (time.monotonic() - start_time) * 1000.0
-            return (1, f"Error de ejecución en el host: {exc}", duration)
+            return (1, f"Execution error on the host: {exc}", duration)
 
     def _run_bwrap(
         self,
@@ -213,19 +213,19 @@ class SandboxExecutor:
             if any(ind in out for ind in display_error_indicators):
                 retcode = 126
                 out = (
-                    f"Error de Seguridad/Sandbox ({config.level.value}): No se puede abrir una ventana gráfica "
-                    f"desde este contenedor aislado (sin acceso a Wayland/X11).\n"
-                    f"Para abrir aplicaciones de escritorio en la pantalla del usuario se requiere nivel LEVEL_3_HOST_USER.\n"
-                    f"Detalle técnico: {out}"
+                    f"Security/Sandbox error ({config.level.value}): Cannot open a graphical window "
+                    f"from this isolated container (no access to Wayland/X11).\n"
+                    f"To open desktop applications on the user's screen, LEVEL_3_HOST_USER is required.\n"
+                    f"Technical detail: {out}"
                 )
             elif not out:
-                out = f"(Sandbox bwrap finalizado con código de salida {retcode})"
+                out = f"(Sandbox bwrap finished with exit code {retcode})"
 
             duration = (time.monotonic() - start_time) * 1000.0
             return (retcode, out, duration)
         except subprocess.TimeoutExpired as exc:
             duration = (time.monotonic() - start_time) * 1000.0
-            return (124, f"Error: Límite de tiempo en sandbox ({timeout}s) excedido.", duration)
+            return (124, f"Error: Sandbox time limit ({timeout}s) exceeded.", duration)
         except Exception as exc:
             duration = (time.monotonic() - start_time) * 1000.0
-            return (1, f"Error de sandbox bwrap: {exc}", duration)
+            return (1, f"bwrap sandbox error: {exc}", duration)

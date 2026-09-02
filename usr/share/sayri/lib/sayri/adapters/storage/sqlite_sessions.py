@@ -64,7 +64,7 @@ class SQLiteSessionRepository:
             conn.commit()
 
     # ── Sessions
-    def create_session(self, agent_id: str = "default", title: str = "Nueva Conversación") -> Session:
+    def create_session(self, agent_id: str = "default", title: str = "New Conversation") -> Session:
         session = Session(agent_id=agent_id, title=title)
         with self._get_conn() as conn:
             conn.execute(

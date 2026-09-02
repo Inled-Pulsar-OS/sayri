@@ -105,7 +105,7 @@ class AgentProfile:
 @dataclass
 class Session:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    title: str = "Nueva Conversación"
+    title: str = "New Conversation"
     agent_id: str = "default"
     messages: List[Message] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)

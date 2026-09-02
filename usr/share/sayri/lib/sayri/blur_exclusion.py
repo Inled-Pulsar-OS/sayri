@@ -59,7 +59,7 @@ def _add_blacklist(entries: list[str] | None = None) -> bool:
             settings.sync()
         return True
     except Exception as exc:  # noqa: BLE001
-        print(f"[sayri] aviso: no se pudo actualizar blacklist de blur: {exc}")
+        print(f"[sayri] warning: could not update blur blacklist: {exc}")
         return False
 
 
@@ -70,8 +70,8 @@ def apply_blur_exclusion() -> None:
         return
     try:
         added = _add_blacklist()
-        print("[sayri] blur-my-shell blacklist actualizado"
+        print("[sayri] blur-my-shell blacklist updated"
               if added else
-              "[sayri] blur-my-shell no presente; los layer-shell se excluyen solos")
+              "[sayri] blur-my-shell not present; layer-shells are excluded automatically")
     except Exception as exc:  # noqa: BLE001
-        print(f"[sayri] aviso: exención de blur no disponible: {exc}")
+        print(f"[sayri] warning: blur exclusion not available: {exc}")

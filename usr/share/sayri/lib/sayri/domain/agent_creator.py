@@ -30,9 +30,9 @@ class AgentCreator:
         results.append(
             AgentProfile(
                 id="default",
-                name="Sayri Principal",
-                description="Asistente de sistema operativo principal para Pulsar OS",
-                system_prompt="Eres Sayri, la asistente inteligente integrada en Pulsar OS.",
+                name="Main Sayri",
+                description="Main operating system assistant for Pulsar OS",
+                system_prompt="You are Sayri, the intelligent assistant integrated into Pulsar OS.",
                 sandbox=SandboxConfig(level=SandboxLevel.LEVEL_3_HOST_USER),
                 is_builtin=True,
             )
@@ -152,8 +152,8 @@ class AgentCreator:
         if max_allowed_level in (SandboxLevel.LEVEL_0_NO_EXEC, SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
             return (
                 False,
-                f"Error de seguridad: El entorno actual está restringido a nivel '{max_allowed_level.value}'. "
-                "No tiene permisos para crear o registrar subagentes en el sistema.",
+                f"Security error: The current environment is restricted to level '{max_allowed_level.value}'. "
+                "It has no permissions to create or register sub-agents on the system.",
                 None,
             )
 
@@ -161,9 +161,9 @@ class AgentCreator:
 
         # Heuristic determination of Sandbox Level
         sandbox_level = SandboxLevel.LEVEL_3_HOST_USER
-        if "sin comandos" in text or "no ejecute" in text or "no comandos" in text or "solo chat" in text or "discord" in text or "telegram" in text:
+        if "sin comandos" in text or "no ejecute" in text or "no comandos" in text or "solo chat" in text or "discord" in text or "telegram" in text or "no commands" in text or "chat only" in text or "conversational only" in text:
             sandbox_level = SandboxLevel.LEVEL_0_NO_EXEC
-        elif "solo lectura" in text or "aislado" in text or "sandbox" in text:
+        elif "solo lectura" in text or "aislado" in text or "sandbox" in text or "read only" in text or "isolated" in text:
             sandbox_level = SandboxLevel.LEVEL_2_ISOLATED_DEV
 
         # Enforce privilege boundary: target level can never exceed max_allowed_level
@@ -185,24 +185,24 @@ class AgentCreator:
         if "ollama" in text or "local" in text:
             provider = "ollama"
             model_name = "qwen2.5-coder:7b"
-        elif "flash" in text or "rapido" in text or "barato" in text:
+        elif "flash" in text or "rapido" in text or "barato" in text or "fast" in text or "cheap" in text:
             model_name = "gemini-2.5-flash"
         elif "sonnet" in text or "claude" in text:
             model_name = "claude-3-5-sonnet"
 
         # Generate ID & Name
-        slug_match = re.search(r"(?:subagente|agente|crear un agente para|crea un subagente para)\s+([a-zA-Z0-9_\-\s]{3,30})", prompt_text, re.IGNORECASE)
-        raw_name = slug_match.group(1).strip() if slug_match else "Nuevo Subagente"
+        slug_match = re.search(r"(?:subagente|agente|crear un agente para|crea un subagente para|subagent|agent|create an agent for|create a subagent for)\s+([a-zA-Z0-9_\-\s]{3,30})", prompt_text, re.IGNORECASE)
+        raw_name = slug_match.group(1).strip() if slug_match else "New Sub-Agent"
         agent_id = re.sub(r"[^\w\-]", "_", raw_name.lower())[:24].strip("_") or f"agent_{int(time.time())}"
 
         profile = AgentProfile(
             id=agent_id,
             name=raw_name.capitalize(),
-            description=f"Subagente creado por voz: {prompt_text[:80]}...",
+            description=f"Sub-agent created by voice: {prompt_text[:80]}...",
             system_prompt=(
-                f"Eres {raw_name.capitalize()}, un subagente especializado de Sayri en Pulsar OS.\n"
-                f"Tu objetivo específico es: {prompt_text}\n"
-                "Responde siempre de manera concisa y respetando tus niveles de seguridad asignados."
+                f"You are {raw_name.capitalize()}, a specialized Sayri sub-agent in Pulsar OS.\n"
+                f"Your specific objective is: {prompt_text}\n"
+                "Always respond concisely and respect your assigned security levels."
             ),
             model=AgentModelConfig(
                 provider=provider,
@@ -217,7 +217,7 @@ class AgentCreator:
         )
 
         saved_path = cls.save_agent(profile)
-        msg = f"✓ Subagente '{profile.name}' creado con éxito (Nivel: {sandbox_level.value}) en `{saved_path}`."
+        msg = f"✓ Sub-agent '{profile.name}' created successfully (Level: {sandbox_level.value}) at `{saved_path}`."
         return True, msg, profile
 
     @classmethod
@@ -225,7 +225,7 @@ class AgentCreator:
         """Creates a new SKILL.md template under ~/.config/sayri/skills/<name>/."""
         clean_name = re.sub(r"[^\w\-]", "_", name.lower()).strip("_")
         if not clean_name:
-            return False, "Nombre de habilidad no válido."
+            return False, "Invalid skill name."
 
         skill_dir = os.path.join(paths.skills_dir(), clean_name)
         os.makedirs(skill_dir, exist_ok=True)
@@ -233,19 +233,19 @@ class AgentCreator:
 
         content = f"""---
 name: {clean_name}
-description: {description or 'Habilidad creada por voz en Sayri'}
+description: {description or 'Skill created by voice in Sayri'}
 ---
 
 # Skill: {clean_name}
 
-## Descripción
-{description or 'Habilidad personalizada para Sayri / Pulsar OS.'}
+## Description
+{description or 'Custom skill for Sayri / Pulsar OS.'}
 
-## Instrucciones de Ejecución
-{instructions or 'Cuando el usuario pida esta tarea, ejecuta los comandos bash correspondientes de forma segura.'}
+## Execution Instructions
+{instructions or 'When the user asks for this task, run the corresponding bash commands safely.'}
 """
 
         with open(skill_file, "w", encoding="utf-8") as f:
             f.write(content)
 
-        return True, f"✓ Habilidad '{clean_name}' creada en `{skill_file}`."
+        return True, f"✓ Skill '{clean_name}' created at `{skill_file}`."

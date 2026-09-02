@@ -1350,9 +1350,9 @@ class SayriCajita(Gtk.Box):
                     pass
             g_badge = Gtk.Label()
             if guests_enabled:
-                g_badge.set_markup("<span foreground='#10b981' size='8500' weight='600'>👥 Invitados: ON</span>")
+                g_badge.set_markup("<span foreground='#10b981' size='8500' weight='600'>👥 Guests: ON</span>")
             else:
-                g_badge.set_markup("<span foreground='#94a3b8' size='8500' weight='600'>🔒 Solo Dueño</span>")
+                g_badge.set_markup("<span foreground='#94a3b8' size='8500' weight='600'>🔒 Owner Only</span>")
             header_row.append(g_badge)
 
             # Edit / Configure Button
@@ -2315,7 +2315,7 @@ class SayriCajita(Gtk.Box):
             box.append(tok_entry)
 
             # 5. Channel Guests Access (Kill Switch)
-            guests_check = Gtk.CheckButton(label="👥 Permitir interacción a miembros en canales (Guest Access)")
+            guests_check = Gtk.CheckButton(label="👥 Allow channel members to interact (Guest Access)")
             guests_val = instance_data.get("allow_channel_guests", False)
             auth_f = Path.home() / ".config" / "sayri" / f"authorizations_{inst_id}.json"
             if auth_f.is_file():

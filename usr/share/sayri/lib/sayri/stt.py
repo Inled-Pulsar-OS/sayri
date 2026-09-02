@@ -41,6 +41,7 @@ def _whisper_lang(raw: str) -> str:
 
 GHOST_PATTERNS = [
     r"^[\s\.\,\!\?\:\;\-_]*$",
+    # Spanish ghost phrases commonly hallucinated by whisper
     r"subt[ií]tulos",
     r"suscr[ií]bete",
     r"gracias por ver",
@@ -52,6 +53,20 @@ GHOST_PATTERNS = [
     r"dale like",
     r"v[ií]deo siguiente",
     r"todos los derechos reservados",
+    # English ghost phrases commonly hallucinated by whisper
+    r"subtitles",
+    r"subscribe",
+    r"thanks for watching",
+    r"amara\.org",
+    r"transcript",
+    r"transcription by",
+    r"for more videos",
+    r"next video",
+    r"see you next time",
+    r"give a like",
+    r"hit like",
+    r"all rights reserved",
+    r"please like and subscribe",
 ]
 
 
@@ -59,7 +74,7 @@ def clean_transcription(text: str) -> str:
     if not text:
         return ""
     import re
-    # Remove bracketed, parenthesized, or starred sound annotations e.g. [musica], (motor), [toc, toc], *aplausos*
+    # Remove bracketed, parenthesized, or starred sound annotations e.g. [music], (engine), [knock, knock], *applause*
     cleaned = re.sub(r"\[.*?\]", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"\(.*?\)", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\*.*?\*", "", cleaned, flags=re.IGNORECASE)
@@ -128,7 +143,7 @@ class STTEngine:
             "-nt",          # no timestamps
             "-np",          # no prints beyond the result
             "-oj",          # also write JSON (keeps stdout clean)
-            "--prompt", "Sayri, Oye Sayri, Hey Sayri, Hola Sayri.",
+            "--prompt", "Sayri, Oye Sayri, Hey Sayri, Hola Sayri, Hello Sayri, Hi Sayri.",
         ]
         try:
             proc = subprocess.run(
