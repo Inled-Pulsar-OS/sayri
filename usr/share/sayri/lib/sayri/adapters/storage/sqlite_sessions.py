@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from sayri import paths
@@ -17,7 +18,9 @@ class SQLiteSessionRepository:
 
     def __init__(self, db_path: Optional[str] = None) -> None:
         self.db_path = db_path or paths.sessions_db()
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        dname = os.path.dirname(self.db_path)
+        if dname:
+            os.makedirs(dname, exist_ok=True)
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
