@@ -9,3 +9,6 @@ web/package-lock.json
 
 # Staging
 .sayri-web-tmp/
+
+# Build output
+dist/

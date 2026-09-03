@@ -1,0 +1,128 @@
+name: Build packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# Gate: only actually build when triggered manually, or when a pushed commit
+# message contains the [RELEASE] marker.
+jobs:
+  debian:
+    name: Debian .deb
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[RELEASE]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev fakeroot
+      - name: Build
+        run: ./packaging/build-packages.sh deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sayri-deb
+          path: dist/*.deb
+
+  fedora:
+    name: Fedora .rpm
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[RELEASE]')
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: dnf install -y rpm-build tar gzip
+      - name: Build
+        run: ./packaging/build-packages.sh rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sayri-rpm
+          path: dist/*.rpm
+
+  arch:
+    name: Arch package
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[RELEASE]')
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools and non-root user
+        run: |
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm --needed base-devel fakeroot
+          useradd -m builder
+      - name: Build
+        run: |
+          # makepkg refuses to run as root, so build as the `builder` user.
+          cp -a "$GITHUB_WORKSPACE/." /tmp/work/
+          chown -R builder:builder /tmp/work
+          su builder -s /bin/bash -c 'cd /tmp/work && ./packaging/build-packages.sh arch'
+      - name: Locate artifact
+        id: artifact
+        run: echo "path=$(ls /tmp/work/dist/sayri-*.pkg.tar.* | head -1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sayri-arch
+          path: ${{ steps.artifact.outputs.path }}
+
+  flatpak:
+    name: Flatpak bundle
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[RELEASE]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      - name: Build
+        run: ./packaging/build-packages.sh flatpak
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sayri-flatpak
+          path: dist/*.flatpak
+
+  release:
+    name: Create GitHub Release
+    needs: [debian, fedora, arch, flatpak]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Determine version
+        id: version
+        run: echo "version=$(cat packaging/VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Set release tag
+        id: tag
+        run: |
+          # Use an explicit [RELEASE] commit if present, else the pushed tag.
+          if [ -n "$GITHUB_REF_NAME" ] && [[ "$GITHUB_REF_NAME" == *"${{ steps.version.outputs.version }}"* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Sayri v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.pkg.tar.zst
+            artifacts/**/*.flatpak
