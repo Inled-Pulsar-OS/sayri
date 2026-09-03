@@ -49,8 +49,23 @@ finish-args:
   - --talk-name=org.gnome.Shell
 
 modules:
-  # PyGObject + the bound introspection we need, built against the platform's
-  # Python (3.13 on GNOME 47).
+  # pycairo: python3-cairo bindings. Sayri imports `cairo` directly
+  # (cajita.py, orb.py). Built before pygobject so PyGObject can produce its
+  # Cairo bindings too. Uses Meson, provided by the GNOME SDK.
+  - name: pycairo
+    buildsystem: meson
+    config-opts:
+      - -Dpython=python3
+    cleanup:
+      - '*.a'
+    sources:
+      - type: archive
+        url: https://files.pythonhosted.org/packages/26/7c/ab4637b028d9ee12280ab9342f28310e613d5ca30c4d72d2aebeaa6a4969/pycairo-1.29.1.tar.gz
+        sha256: 4fbd26b4af24c9787d84cf5448e34eb8dca064b732479aaecd03109520eebd5f
+
+  # PyGObject (python3-gi) built against the platform's Python (3.13 on GNOME
+  # 47). The platform carries GTK4/WebKitGTK6 introspection; PyGObject provides
+  # the Python bindings.
   - name: pygobject
     buildsystem: meson
     config-opts:

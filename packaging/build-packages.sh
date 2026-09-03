@@ -119,7 +119,9 @@ build_flatpak() {
     # The manifest's `dir` sources (../usr, ../etc) resolve from packaging/.
     # --user keeps the runtime/cache in the calling user's home so non-root CI
     # runners and headless systems work without a system installation.
-    if ! flatpak-builder --user --state-dir="$builddir/.state" \
+    # --install-deps-from=flathub pulls the org.gnome.Platform/Sdk runtimes
+    # from Flathub automatically (the remote must already be added).
+    if ! flatpak-builder --user --install-deps-from=flathub --state-dir="$builddir/.state" \
         --repo="$builddir/repo" --force-clean "$builddir/build" "$manifest"; then
         die "flatpak-builder failed"
     fi

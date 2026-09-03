@@ -44,7 +44,9 @@ It ships with 5 levels of sandboxing, skills/plugins/gateways, a wake word and
 a settings window. Speech and transcription models run 100% locally.
 
 %prep
-%setup -q -n sayri-%{version}
+# %setup -c creates + cd's into sayri-<version>; the tarball is just the
+# package tree (usr/ etc/ packaging/), extracted inside that dir.
+%setup -c -q -n sayri-%{version}
 
 %install
 rm -rf %{buildroot}
@@ -90,5 +92,5 @@ fi
 exit 0
 
 %changelog
-* Wed Sep 2026 Jaice <info@inled.es> - 0.1.3-1
+* Wed Sep 03 2026 Jaice <info@inled.es> - 0.1.3-1
 - Initial RPM packaging of Sayri 0.1.3
