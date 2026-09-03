@@ -45,7 +45,7 @@ prepare_staging() {
     cp -a "$ROOT/etc" "$STAGING/etc"
     # Debian control (only meaningful for the .deb, harmless elsewhere).
     mkdir -p "$STAGING/DEBIAN"
-    sed "s/__VERSION__/$VERSION/g" "$ROOT/DEBIAN/control" > "$STAGING/DEBIAN/control"
+    sed -E "s/^Version:.*/Version: $VERSION/" "$ROOT/DEBIAN/control" > "$STAGING/DEBIAN/control"
 }
 
 last_staging=""
