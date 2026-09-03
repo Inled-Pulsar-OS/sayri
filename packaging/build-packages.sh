@@ -79,7 +79,8 @@ build_rpm() {
     # Copy the payload into the spec's expected SOURCES layout.
     mkdir -p "$rpmbuilddir/SOURCES"
     tar -C "$ROOT" --exclude='dist' --exclude='web/node_modules' --exclude='web/.expo' \
-        --exclude='.git' -cf "$rpmbuilddir/SOURCES/sayri-$VERSION.tar.gz" packaging usr etc
+        --exclude='.git' -cf "$rpmbuilddir/SOURCES/sayri-$VERSION.tar.gz" \
+        README.md packaging usr etc
     rpmbuild --define "_topdir $rpmbuilddir" \
              --define "sayri_version $VERSION" \
              -bb "$HERE/sayri.spec"
@@ -112,20 +113,26 @@ build_arch() {
 build_flatpak() {
     log "Building Flatpak bundle (v$VERSION)"
     command -v flatpak-builder >/dev/null || { warn "flatpak-builder not found, skipping Flatpak"; return 1; }
-    local manifest="$HERE/io.github.inled.sayri.yml"
-    local builddir
-    builddir="$(mktemp -d "${TMPDIR:-/tmp}/sayri-flatpak.XXXXXX")"
-    trap 'rm -rf "$builddir"' RETURN
-    # The manifest's `dir` sources (../usr, ../etc) resolve from packaging/.
+    local work
+    work="$(mktemp -d "${TMPDIR:-/tmp}/sayri-flatpak.XXXXXX")"
+    # flatpak-builder requires that `dir` sources live INSIDE the build dir and
+    # resolves their paths relative to the manifest location. So lay out a
+    # source tree (packaging/ + usr/ + etc/) in a temp workdir and build there.
+    cp -a "$ROOT/packaging" "$work/packaging"
+    cp -a "$ROOT/usr" "$work/usr"
+    cp -a "$ROOT/etc" "$work/etc"
+    local manifest="$work/packaging/io.github.inled.sayri.yml"
     # --user keeps the runtime/cache in the calling user's home so non-root CI
     # runners and headless systems work without a system installation.
-    # --install-deps-from=flathub pulls the org.gnome.Platform/Sdk runtimes
-    # from Flathub automatically (the remote must already be added).
-    if ! flatpak-builder --user --install-deps-from=flathub --state-dir="$builddir/.state" \
-        --repo="$builddir/repo" --force-clean "$builddir/build" "$manifest"; then
+    # --install-deps-from=flathub pulls org.gnome.Platform/Sdk automatically
+    # (the flathub remote must already be added).
+    if ! flatpak-builder --user --install-deps-from=flathub --state-dir="$work/.state" \
+        --repo="$work/repo" --force-clean "$work/build" "$manifest"; then
+        rm -rf "$work"
         die "flatpak-builder failed"
     fi
-    flatpak build-bundle "$builddir/repo" "$DIST/sayri-$VERSION.flatpak" es.inled.sayri
+    flatpak build-bundle "$work/repo" "$DIST/sayri-$VERSION.flatpak" es.inled.sayri
+    rm -rf "$work"
     log "  -> $DIST/sayri-$VERSION.flatpak"
 }
 
