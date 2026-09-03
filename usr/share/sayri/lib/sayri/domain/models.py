@@ -43,6 +43,7 @@ class Message:
     content: str
     tool_calls: List[ToolCall] = field(default_factory=list)
     tool_call_id: Optional[str] = None
+    id: Optional[str] = None
     timestamp: float = field(default_factory=time.time)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
