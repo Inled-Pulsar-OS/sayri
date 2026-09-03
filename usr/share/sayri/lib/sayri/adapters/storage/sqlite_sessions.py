@@ -292,3 +292,39 @@ class SQLiteSessionRepository:
             })
         return results
 
+    def search_all_messages(self, query: str = "", limit: int = 10) -> List[Dict[str, Any]]:
+        """Searches messages across ALL sessions (local desktop, telegram, discord gateways)."""
+        with self._get_conn() as conn:
+            if query.strip():
+                rows = conn.execute(
+                    """
+                    SELECT m.role, m.content, m.timestamp, s.title as session_title, s.id as session_id
+                    FROM messages m
+                    JOIN sessions s ON m.session_id = s.id
+                    WHERE m.content LIKE ? OR s.title LIKE ?
+                    ORDER BY m.timestamp DESC LIMIT ?
+                    """,
+                    (f"%{query.strip()}%", f"%{query.strip()}%", limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT m.role, m.content, m.timestamp, s.title as session_title, s.id as session_id
+                    FROM messages m
+                    JOIN sessions s ON m.session_id = s.id
+                    ORDER BY m.timestamp DESC LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+
+        results = []
+        for r in reversed(rows):
+            results.append({
+                "role": r["role"],
+                "content": r["content"][:400],
+                "timestamp": r["timestamp"],
+                "session_title": r["session_title"],
+                "session_id": r["session_id"],
+            })
+        return results
+

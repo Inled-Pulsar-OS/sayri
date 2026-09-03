@@ -3231,10 +3231,10 @@ class SayriCajita(Gtk.Box):
 
             if role == "user":
                 hdr.set_markup("<span size='8500' weight='700' foreground='#38bdf8'>👤 User</span>")
-                body.set_text(content)
+                body.set_text(content or "")
             else:
                 hdr.set_markup("<span size='8500' weight='700' foreground='#10b981'>🤖 Sayri</span>")
-                _safe_set_markup(body, content)
+                _safe_set_markup(body, content or "")
 
             msg_card.append(hdr)
             msg_card.append(body)

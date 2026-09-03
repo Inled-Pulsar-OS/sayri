@@ -309,11 +309,16 @@ class AgentEngine:
                 query_term = m_hist.group(1).strip()
                 on_tool_start(f"search_history: {query_term}")
                 past_matches = self.storage.search_session_messages(session_id, query=query_term, limit=6)
+                if not past_matches:
+                    past_matches = self.storage.search_all_messages(query=query_term, limit=8)
                 if past_matches:
-                    fmt_items = [f"- [{item['role'].upper()}]: {item['content']}" for item in past_matches]
+                    fmt_items = []
+                    for item in past_matches:
+                        session_tag = f" ({item['session_title']})" if "session_title" in item else ""
+                        fmt_items.append(f"- [{item['role'].upper()}{session_tag}]: {item['content']}")
                     obs = f"[Chat History Search Results for '{query_term}']:\n" + "\n".join(fmt_items)
                 else:
-                    obs = f"[Chat History Search Results for '{query_term}']: No matching messages found in session history."
+                    obs = f"[Chat History Search Results for '{query_term}']: No matching messages found across conversations."
 
                 on_tool_finish(f"search_history: {query_term}", obs, 0)
                 next_messages = list(messages)
