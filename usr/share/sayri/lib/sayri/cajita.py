@@ -1108,6 +1108,13 @@ class SayriCajita(Gtk.Box):
 
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             title = s.title if s.title else "Conversation"
+            if s.id.startswith("tg-") or "telegram" in s.id.lower():
+                title = f"✈️ {title}"
+            elif s.id.startswith("discord-") or "discord" in s.id.lower():
+                title = f"🎮 {title}"
+            elif "remote" in s.id.lower():
+                title = f"🌐 {title}"
+
             if s.id == active_id:
                 title = f"[Active] {title}"
 
@@ -2181,8 +2188,23 @@ class SayriCajita(Gtk.Box):
             tok_entry = Gtk.Entry()
             tok_entry.set_visibility(False)
             tok_entry.set_placeholder_text("Paste required bot token or API key…")
-            tok_entry.add_css_class("sayri-settings-entry")
-            box.append(tok_entry)
+            # 6. Session Continuity & Standby Inactivity Timeout
+            resume_check = Gtk.CheckButton(label="🔄 Allow resuming / continuing previous conversations (/resume)")
+            resume_check.set_active(True)
+            resume_check.set_margin_top(4)
+            box.append(resume_check)
+
+            timeout_lbl = Gtk.Label(label="End conversation after inactivity (Standby Timeout):")
+            timeout_lbl.set_halign(Gtk.Align.START)
+            timeout_lbl.set_margin_top(4)
+            box.append(timeout_lbl)
+
+            timeout_options = ["15 minutes", "30 minutes (Default)", "60 minutes (1 hour)", "120 minutes (2 hours)"]
+            timeout_values = [15, 30, 60, 120]
+            timeout_model = Gtk.StringList.new(timeout_options)
+            timeout_drop = Gtk.DropDown.new(timeout_model, None)
+            timeout_drop.set_selected(1)  # Default 30 min
+            box.append(timeout_drop)
 
             def _on_plugin_selected(_drop, _param):
                 idx = plugin_drop.get_selected()
@@ -2205,10 +2227,12 @@ class SayriCajita(Gtk.Box):
                 p_idx = plugin_drop.get_selected()
                 ag_idx = agent_drop.get_selected()
                 sb_idx = sb_drop.get_selected()
+                t_idx = timeout_drop.get_selected()
 
                 selected_plugin = installed_plugins[p_idx]
                 selected_agent = agents[ag_idx]
                 selected_sb = sb_keys[sb_idx]
+                selected_timeout = timeout_values[t_idx] if 0 <= t_idx < len(timeout_values) else 30
 
                 import re, time
                 raw_name = name_entry.get_text().strip() or f"{selected_plugin['name']} ({selected_agent.name})"
@@ -2231,6 +2255,8 @@ class SayriCajita(Gtk.Box):
                     "sandbox_level": selected_sb,
                     "secret_key": sec_key,
                     "auth_mode": selected_plugin.get("auth_mode", "pairing_otp"),
+                    "allow_resume_previous": resume_check.get_active(),
+                    "inactivity_timeout_minutes": selected_timeout,
                     "enabled": True,
                     "created_at": time.time(),
                 }
@@ -2329,6 +2355,27 @@ class SayriCajita(Gtk.Box):
             guests_check.set_margin_top(4)
             box.append(guests_check)
 
+            # 6. Session Continuity & Standby Inactivity Timeout
+            resume_check = Gtk.CheckButton(label="🔄 Allow resuming / continuing previous conversations (/resume)")
+            resume_check.set_active(instance_data.get("allow_resume_previous", True))
+            resume_check.set_margin_top(4)
+            box.append(resume_check)
+
+            timeout_lbl = Gtk.Label(label="End conversation after inactivity (Standby Timeout):")
+            timeout_lbl.set_halign(Gtk.Align.START)
+            timeout_lbl.set_margin_top(4)
+            box.append(timeout_lbl)
+
+            timeout_options = ["15 minutes", "30 minutes (Default)", "60 minutes (1 hour)", "120 minutes (2 hours)"]
+            timeout_values = [15, 30, 60, 120]
+            cur_timeout = instance_data.get("inactivity_timeout_minutes", 30)
+            cur_t_idx = timeout_values.index(cur_timeout) if cur_timeout in timeout_values else 1
+
+            timeout_model = Gtk.StringList.new(timeout_options)
+            timeout_drop = Gtk.DropDown.new(timeout_model, None)
+            timeout_drop.set_selected(cur_t_idx)
+            box.append(timeout_drop)
+
             # Save Button
             save_btn = Gtk.Button(label="Save Configuration")
             save_btn.add_css_class("sayri-action-btn")
@@ -2338,9 +2385,11 @@ class SayriCajita(Gtk.Box):
             def _save(_b):
                 ag_idx = agent_drop.get_selected()
                 sb_idx = sb_drop.get_selected()
+                t_idx = timeout_drop.get_selected()
 
                 selected_agent = agents[ag_idx]
                 selected_sb = sb_keys[sb_idx]
+                selected_timeout = timeout_values[t_idx] if 0 <= t_idx < len(timeout_values) else 30
                 new_tok = tok_entry.get_text().strip()
 
                 if new_tok:
@@ -2351,6 +2400,8 @@ class SayriCajita(Gtk.Box):
                 instance_data["sandbox_level"] = selected_sb
                 instance_data["secret_key"] = sec_key
                 instance_data["allow_channel_guests"] = guests_check.get_active()
+                instance_data["allow_resume_previous"] = resume_check.get_active()
+                instance_data["inactivity_timeout_minutes"] = selected_timeout
                 gateway_supervisor.save_instance(instance_data)
 
                 # Sync to authorizations file

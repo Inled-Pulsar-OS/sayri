@@ -417,6 +417,17 @@ class SayriApp(Gtk.Application):
         if not session_id:
             inst_tag = f"-{instance_id}" if instance_id else ""
             session_id = f"remote{inst_tag}-{agent_profile.id}-{author.replace('@', '')}"
+
+        # Ensure session exists in SQLite repository with proper gateway metadata and title
+        existing_session = self.storage.get_session(session_id)
+        if not existing_session:
+            gw_label = instance_id.replace("sayri-gateway-", "").capitalize() if instance_id else "Gateway"
+            initial_title = f"{author} ({gw_label})"
+            self.storage.create_session(
+                agent_id=agent_profile.id,
+                title=initial_title
+            )
+
         try:
             self.engine.process_query(
                 session_id=session_id,
@@ -431,6 +442,10 @@ class SayriApp(Gtk.Application):
             )
             # Wait up to 35 seconds for the LLM response
             done_event.wait(timeout=35.0)
+
+            # Sync session changes with active desktop UI
+            self._notify_sessions_updated()
+
             if result_holder["text"]:
                 return result_holder["text"].strip()
             if result_holder["error"]:
@@ -440,6 +455,14 @@ class SayriApp(Gtk.Application):
             return f"⚠️ Error processing message: {exc}"
 
         return result_holder["text"].strip() or f"Hi {author}, I received your message: '{text}'."
+
+    def _notify_sessions_updated(self) -> None:
+        """Notifies cajita chat history UI in real-time when new remote messages arrive."""
+        try:
+            if self.overlay and hasattr(self.overlay, "cajita") and self.overlay.cajita:
+                GLib.idle_add(self.overlay.cajita._populate_sessions)
+        except Exception:
+            pass
 
     def toggle_visible(self) -> None:
         if self.overlay:

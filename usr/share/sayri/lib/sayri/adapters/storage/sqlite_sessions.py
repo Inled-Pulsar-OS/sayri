@@ -224,3 +224,47 @@ class SQLiteSessionRepository:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM gateway_peers WHERE peer_id = ?", (peer_id,))
             conn.commit()
+
+    # ── History & Smart Context Retrieval
+    def get_last_session_for_prefix(self, prefix: str) -> Optional[Session]:
+        """Finds the most recently updated session starting with a given prefix."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM sessions WHERE id LIKE ? ORDER BY updated_at DESC LIMIT 1",
+                (f"{prefix}%",),
+            ).fetchone()
+            if row:
+                return self.get_session(row["id"])
+        return None
+
+    def search_session_messages(self, session_id: str, query: str = "", limit: int = 8) -> List[Dict[str, Any]]:
+        """Searches messages in a session or retrieves past messages formatted cleanly for memory recall."""
+        with self._get_conn() as conn:
+            if query.strip():
+                rows = conn.execute(
+                    """
+                    SELECT role, content, timestamp FROM messages
+                    WHERE session_id = ? AND content LIKE ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                    (session_id, f"%{query.strip()}%", limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT role, content, timestamp FROM messages
+                    WHERE session_id = ?
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                    (session_id, limit),
+                ).fetchall()
+
+        results = []
+        for r in reversed(rows):
+            results.append({
+                "role": r["role"],
+                "content": r["content"][:400],
+                "timestamp": r["timestamp"],
+            })
+        return results
+

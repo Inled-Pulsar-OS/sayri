@@ -107,6 +107,8 @@ class GatewaySupervisor:
                     "sandbox_level": "LEVEL_1_READONLY",
                     "secret_key": default_sec,
                     "auth_mode": p.get("auth_mode", "pairing_otp"),
+                    "allow_resume_previous": True,
+                    "inactivity_timeout_minutes": 30,
                     "enabled": True,
                     "created_at": time.time(),
                 }
@@ -213,6 +215,9 @@ class GatewaySupervisor:
         env["SAYRI_GATEWAY_INSTANCE_ID"] = instance_id
         env["SAYRI_TARGET_AGENT"] = inst.get("agent_id", "default")
         env["SAYRI_SANDBOX_LEVEL"] = inst.get("sandbox_level", "LEVEL_1_READONLY")
+        env["SAYRI_ALLOW_RESUME_PREVIOUS"] = "1" if inst.get("allow_resume_previous", True) else "0"
+        timeout_secs = int(inst.get("inactivity_timeout_minutes", 30)) * 60
+        env["SAYRI_INACTIVITY_TIMEOUT"] = str(timeout_secs)
         env["SAYRI_PID_FILE"] = str(Path.home() / ".config" / "sayri" / f"gateway_{instance_id}.pid")
         env["SAYRI_AUTH_FILE"] = str(Path.home() / ".config" / "sayri" / f"authorizations_{instance_id}.json")
         env["SAYRI_PIN_FILE"] = str(Path.home() / ".config" / "sayri" / f"pairing_pin_{instance_id}.json")

@@ -61,6 +61,7 @@ class AgentEngine:
             "1. System Orchestration: You can read files, open applications and run tools within your sandbox limits.\n"
             "2. Sub-Agent Creation and Management: You can create sub-agents configured with different models and sandbox levels.\n"
             "3. Skills and Plugins: You can search for and install extensions from the Pulsar Store (https://store-os.inled.es).\n"
+            "4. Memory & Conversation History: You maintain context with recent messages. If you need details from earlier in the conversation, you can emit ```search_history <keyword>``` to query past messages.\n"
             f"{skills_summary}\n\n"
             "CRITICAL EXECUTION AND TRUTHFULNESS RULES:\n"
             "1. If you need to perform an action on the system, emit a block:\n"
@@ -148,11 +149,34 @@ class AgentEngine:
         if len(session.messages) <= 2 or session.title.startswith("New Conversation") or session.title == user_text[:30]:
             self._generate_session_title_async(session.id, user_text, cfg)
 
-        # Prepare messages payload
+        # Prepare messages payload with token-efficient context window
         messages = [{"role": "system", "content": self.build_system_prompt(profile)}]
-        # Sliding context window (last 10 messages) for token efficiency
-        for m in session.messages[-10:]:
-            messages.append({"role": m.role, "content": m.content})
+
+        all_past_msgs = session.messages
+        if len(all_past_msgs) > 4:
+            # Compact older context summary to save tokens while keeping conversation state
+            older_msgs = all_past_msgs[:-4]
+            topics_summary = []
+            for om in older_msgs[-8:]:
+                snippet = om.content.strip().replace("\n", " ")[:90]
+                if snippet:
+                    role_tag = "User" if om.role == "user" else "Sayri"
+                    topics_summary.append(f"{role_tag}: {snippet}")
+            if topics_summary:
+                compact_note = (
+                    "[Previous context summary in this session:\n"
+                    + "\n".join(topics_summary)
+                    + "\n(Use ```search_history <keyword>``` if you need older verbatim details)]"
+                )
+                messages.append({"role": "system", "content": compact_note})
+
+            # Append the most recent 4 messages for immediate conversational continuity
+            for m in all_past_msgs[-4:]:
+                messages.append({"role": m.role, "content": m.content})
+        else:
+            for m in all_past_msgs:
+                messages.append({"role": m.role, "content": m.content})
+
         messages.append({"role": "user", "content": user_text})
 
         threading.Thread(
@@ -261,7 +285,41 @@ class AgentEngine:
             if not self._active_queries.get(query_id, False):
                 return
 
-            # Check for bash commands in reply
+            # 1. Check for internal SQLite conversation history search tool (works in LEVEL_0_NO_EXEC without touching host)
+            m_hist = re.search(r"```(?:search_history|search_chat_history|recall_history)\s*\n(.*?)\n```", full_text, re.DOTALL)
+            if not m_hist:
+                m_hist = re.search(r"<(?:search_history|recall_history)>(.*?)</(?:search_history|recall_history)>", full_text, re.DOTALL)
+
+            if m_hist and depth < 6:
+                query_term = m_hist.group(1).strip()
+                on_tool_start(f"search_history: {query_term}")
+                past_matches = self.storage.search_session_messages(session_id, query=query_term, limit=6)
+                if past_matches:
+                    fmt_items = [f"- [{item['role'].upper()}]: {item['content']}" for item in past_matches]
+                    obs = f"[Chat History Search Results for '{query_term}']:\n" + "\n".join(fmt_items)
+                else:
+                    obs = f"[Chat History Search Results for '{query_term}']: No matching messages found in session history."
+
+                on_tool_finish(f"search_history: {query_term}", obs, 0)
+                next_messages = list(messages)
+                next_messages.append({"role": "assistant", "content": full_text})
+                next_messages.append({"role": "user", "content": obs})
+                self._react_loop(
+                    query_id,
+                    session_id,
+                    profile,
+                    next_messages,
+                    cfg,
+                    depth + 1,
+                    on_delta,
+                    on_done,
+                    on_tool_start,
+                    on_tool_finish,
+                    on_error,
+                )
+                return
+
+            # 2. Check for bash commands in reply
             m = re.search(r"```(?:bash|sh)?\s*\n(.*?)\n```", full_text, re.DOTALL)
             if not m:
                 m = re.search(r"<(?:bash|sh|tool)>(.*?)</(?:bash|sh|tool)>", full_text, re.DOTALL)
