@@ -64,11 +64,24 @@ class SQLiteSessionRepository:
             conn.commit()
 
     # ── Sessions
-    def create_session(self, agent_id: str = "default", title: str = "New Conversation") -> Session:
-        session = Session(agent_id=agent_id, title=title)
+    def create_session(
+        self,
+        agent_id: str = "default",
+        title: str = "New Conversation",
+        session_id: Optional[str] = None,
+    ) -> Session:
+        sid = session_id or str(uuid.uuid4())
+        session = Session(id=sid, agent_id=agent_id, title=title)
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO sessions (id, title, agent_id, created_at, updated_at, token_usage, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO sessions (id, title, agent_id, created_at, updated_at, token_usage, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title=excluded.title,
+                    agent_id=excluded.agent_id,
+                    updated_at=excluded.updated_at
+                """,
                 (
                     session.id,
                     session.title,
@@ -88,10 +101,9 @@ class SQLiteSessionRepository:
                 "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
             ).fetchall()
 
-        results = []
-        for r in rows:
-            results.append(
-                Session(
+            sessions = []
+            for r in rows:
+                s = Session(
                     id=r["id"],
                     title=r["title"],
                     agent_id=r["agent_id"],
@@ -100,36 +112,48 @@ class SQLiteSessionRepository:
                     token_usage=r["token_usage"],
                     metadata=json.loads(r["metadata"] or "{}"),
                 )
-            )
-        return results
+                sessions.append(s)
+            return sessions
 
     def get_session(self, session_id: str) -> Optional[Session]:
         with self._get_conn() as conn:
-            s_row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-            if not s_row:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if not row:
                 return None
 
+            s = Session(
+                id=row["id"],
+                title=row["title"],
+                agent_id=row["agent_id"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                token_usage=row["token_usage"],
+                metadata=json.loads(row["metadata"] or "{}"),
+            )
+
+            # Fetch messages
             m_rows = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC",
+                "SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC",
                 (session_id,),
             ).fetchall()
-
-        messages: List[Message] = []
-        for mr in m_rows:
-            raw_tools = json.loads(mr["tool_calls_json"] or "[]")
-            tool_calls = [
-                ToolCall(
-                    id=t.get("id", ""),
-                    name=t.get("name", "bash"),
-                    arguments=t.get("arguments", {}),
-                    status=ToolCallStatus(t.get("status", "pending")),
-                    output=t.get("output"),
-                    exit_code=t.get("exit_code"),
-                )
-                for t in raw_tools
-            ]
-            messages.append(
-                Message(
+            for mr in m_rows:
+                tc_data = json.loads(mr["tool_calls_json"] or "[]")
+                tool_calls = [
+                    ToolCall(
+                        name=tc["name"],
+                        arguments=tc.get("arguments", {}),
+                        id=tc.get("id"),
+                        status=ToolCallStatus(tc.get("status", "success")),
+                        output=tc.get("output"),
+                        exit_code=tc.get("exit_code"),
+                        duration_ms=tc.get("duration_ms", 0.0),
+                    )
+                    for tc in tc_data
+                ]
+                msg = Message(
+                    id=str(mr["id"]),
                     role=mr["role"],
                     content=mr["content"],
                     tool_calls=tool_calls,
@@ -137,34 +161,22 @@ class SQLiteSessionRepository:
                     timestamp=mr["timestamp"],
                     metadata=json.loads(mr["metadata"] or "{}"),
                 )
-            )
+                s.messages.append(msg)
 
-        return Session(
-            id=s_row["id"],
-            title=s_row["title"],
-            agent_id=s_row["agent_id"],
-            messages=messages,
-            created_at=s_row["created_at"],
-            updated_at=s_row["updated_at"],
-            token_usage=s_row["token_usage"],
-            metadata=json.loads(s_row["metadata"] or "{}"),
-        )
+            return s
 
     def add_message(self, session_id: str, message: Message) -> None:
         now = time.time()
-        tools_payload = [
-            {
-                "id": tc.id,
-                "name": tc.name,
-                "arguments": tc.arguments,
-                "status": tc.status.value,
-                "output": tc.output,
-                "exit_code": tc.exit_code,
-            }
-            for tc in message.tool_calls
-        ]
-
+        tc_json = json.dumps([asdict(tc) for tc in message.tool_calls])
         with self._get_conn() as conn:
+            # Ensure session exists in sessions table to maintain referential integrity
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO sessions (id, title, agent_id, created_at, updated_at, token_usage, metadata)
+                VALUES (?, ?, ?, ?, ?, 0, '{}')
+                """,
+                (session_id, message.content[:30] or "Conversation", "default", now, now),
+            )
             conn.execute(
                 """
                 INSERT INTO messages (session_id, role, content, tool_calls_json, tool_call_id, timestamp, metadata)
@@ -174,12 +186,13 @@ class SQLiteSessionRepository:
                     session_id,
                     message.role,
                     message.content,
-                    json.dumps(tools_payload),
+                    tc_json,
                     message.tool_call_id,
                     message.timestamp or now,
                     json.dumps(message.metadata),
                 ),
             )
+            # Update session timestamp
             conn.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
                 (now, session_id),

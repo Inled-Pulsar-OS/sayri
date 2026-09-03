@@ -105,7 +105,7 @@ class AgentEngine:
         self._active_queries[query_id] = True
 
         session = self.storage.get_session(session_id) or self.storage.create_session(
-            agent_id=profile.id, title=user_text[:30]
+            agent_id=profile.id, title=user_text[:30], session_id=session_id
         )
 
         user_msg = Message(role="user", content=user_text)

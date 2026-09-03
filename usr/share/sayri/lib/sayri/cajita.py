@@ -1184,26 +1184,31 @@ class SayriCajita(Gtk.Box):
 
             v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             title = s.title if s.title else "Conversation"
-            if s.id.startswith("tg-") or "telegram" in s.id.lower():
-                title = f"✈️ {title}"
-            elif s.id.startswith("discord-") or "discord" in s.id.lower():
-                title = f"🎮 {title}"
+            channel_icon = "💬"
+            if s.id.startswith("tg-") or "telegram" in s.id.lower() or "telegram" in title.lower():
+                channel_icon = "✈️"
+            elif s.id.startswith("discord-") or "discord" in s.id.lower() or "discord" in title.lower():
+                channel_icon = "🎮"
             elif "remote" in s.id.lower():
-                title = f"🌐 {title}"
+                channel_icon = "🌐"
 
+            display_title = f"{channel_icon} {title}"
             if s.id == active_id:
-                title = f"[Active] {title}"
+                display_title = f"[Active] {display_title}"
 
             t = Gtk.Label()
-            t.set_markup(f"<span foreground='#ffffff' weight='600' size='10000'>{GLib.markup_escape_text(title)}</span>")
+            t.set_markup(f"<span foreground='#ffffff' weight='600' size='10000'>{GLib.markup_escape_text(display_title)}</span>")
             t.set_halign(Gtk.Align.START)
             t.set_ellipsize(Pango.EllipsizeMode.END)
 
             sess_dt = datetime.datetime.fromtimestamp(s.updated_at)
             dt_str = f"Today {sess_dt.strftime('%H:%M')}" if sess_dt.date() == now.date() else sess_dt.strftime("%d/%m %H:%M")
 
+            msg_count = len(s.messages) if hasattr(s, "messages") and s.messages else ""
+            count_str = f" • {msg_count} msgs" if msg_count else ""
+
             sub = Gtk.Label()
-            sub.set_markup(f"<span foreground='#94a3b8' size='9000'>{dt_str} • {GLib.markup_escape_text(s.agent_id)}</span>")
+            sub.set_markup(f"<span foreground='#94a3b8' size='9000'>{dt_str}{count_str} • {GLib.markup_escape_text(s.agent_id)}</span>")
             sub.set_halign(Gtk.Align.START)
 
             v.append(t)
@@ -3188,7 +3193,7 @@ class SayriCajita(Gtk.Box):
         dialog.present()
 
     def render_session_history(self, title: str, messages: list) -> None:
-        """Shows historical thread transcript."""
+        """Shows historical thread transcript with complete message bubbles."""
         self.thread_title_lbl.set_markup(f"<span weight='600' size='10000' foreground='#f8fafc'>{GLib.markup_escape_text(title)}</span>")
         while True:
             child = self.thread_box.get_first_child()
@@ -3196,23 +3201,39 @@ class SayriCajita(Gtk.Box):
                 break
             self.thread_box.remove(child)
 
+        if not messages:
+            empty_lbl = Gtk.Label(label="No messages in this conversation thread.")
+            empty_lbl.set_halign(Gtk.Align.START)
+            self.thread_box.append(empty_lbl)
+            self.switch_tab("thread")
+            return
+
         for m in messages:
             role = getattr(m, "role", "") if hasattr(m, "role") else m.get("role", "")
             content = getattr(m, "content", "") if hasattr(m, "content") else m.get("content", "")
-            if role == "user" and content:
-                u_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                u_lbl = Gtk.Label()
-                u_lbl.set_markup(f"<span foreground='#38bdf8' weight='600'>You:</span> {GLib.markup_escape_text(content)}")
-                u_lbl.set_wrap(True)
-                u_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                u_box.append(u_lbl)
-                self.thread_box.append(u_box)
-            elif role == "assistant" and content:
-                a_lbl = Gtk.Label()
-                a_lbl.set_wrap(True)
-                a_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                _safe_set_markup(a_lbl, content)
-                self.thread_box.append(a_lbl)
+
+            msg_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            msg_card.add_css_class("sayri-card-item")
+
+            hdr = Gtk.Label()
+            hdr.set_halign(Gtk.Align.START)
+
+            body = Gtk.Label()
+            body.set_halign(Gtk.Align.START)
+            body.set_wrap(True)
+            body.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            body.set_selectable(True)
+
+            if role == "user":
+                hdr.set_markup("<span size='8500' weight='700' foreground='#38bdf8'>👤 User</span>")
+                body.set_text(content)
+            else:
+                hdr.set_markup("<span size='8500' weight='700' foreground='#10b981'>🤖 Sayri</span>")
+                _safe_set_markup(body, content)
+
+            msg_card.append(hdr)
+            msg_card.append(body)
+            self.thread_box.append(msg_card)
 
         self.switch_tab("thread")
 

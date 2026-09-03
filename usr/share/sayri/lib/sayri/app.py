@@ -433,7 +433,8 @@ class SayriApp(Gtk.Application):
             initial_title = f"{author} ({gw_label})"
             self.storage.create_session(
                 agent_id=agent_profile.id,
-                title=initial_title
+                title=initial_title,
+                session_id=session_id,
             )
 
         try:
