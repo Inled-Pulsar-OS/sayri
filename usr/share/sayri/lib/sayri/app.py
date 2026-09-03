@@ -219,16 +219,18 @@ class SayriApp(Gtk.Application):
         if not sess:
             return
         self.active_session_id = sess.id
-        self.active_agent = AgentCreator.get_agent(sess.agent_id) or self.active_agent
+        agent = AgentCreator.get_agent(sess.agent_id) or self.active_agent or AgentCreator.get_agent("default")
+        self.active_agent = agent
         self.history = []
         for m in sess.messages:
             self.history.append((m.role, m.content))
         self._set_busy(False)
         self._assistant_text = ""
-        if self.overlay:
+        if self.overlay and hasattr(self.overlay, "cajita") and self.overlay.cajita:
             self.overlay.cajita.set_speaking(False)
             self.overlay.clear()
-            self.overlay.cajita.update_agent_badge(self.active_agent.name, self.active_agent.sandbox.level.value)
+            if agent:
+                self.overlay.cajita.update_agent_badge(agent.name, agent.sandbox.level.value)
             self.overlay.cajita.render_session_history(sess.title or "Conversation", sess.messages)
         self._msg("hint", f"Conversation: {sess.title[:24]}…")
         sound.play("activate")

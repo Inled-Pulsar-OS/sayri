@@ -98,11 +98,17 @@ class SQLiteSessionRepository:
             conn.commit()
         return session
 
-    def list_sessions(self, limit: int = 50) -> List[Session]:
+    def list_sessions(self, limit: int = 50, include_empty: bool = False) -> List[Session]:
         with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            query = """
+                SELECT s.*, (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as msg_count
+                FROM sessions s
+            """
+            if not include_empty:
+                query += " WHERE (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) > 0"
+            query += " ORDER BY s.updated_at DESC LIMIT ?"
+
+            rows = conn.execute(query, (limit,)).fetchall()
 
             sessions = []
             for r in rows:
@@ -115,6 +121,8 @@ class SQLiteSessionRepository:
                     token_usage=r["token_usage"],
                     metadata=json.loads(r["metadata"] or "{}"),
                 )
+                cnt = r["msg_count"] or 0
+                s.messages = [Message(role="user", content="")] * cnt
                 sessions.append(s)
             return sessions
 

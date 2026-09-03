@@ -1216,7 +1216,12 @@ class SayriCajita(Gtk.Box):
             btn.set_child(v)
 
             sid = s.id
-            btn.connect("clicked", lambda _b, session_id=sid: self.app.switch_session(session_id))
+            def _on_sess_click(_b, session_id=sid):
+                self.app.switch_session(session_id)
+                sess_obj = self.app.storage.get_session(session_id)
+                if sess_obj:
+                    self.render_session_history(sess_obj.title or "Conversation", sess_obj.messages)
+            btn.connect("clicked", _on_sess_click)
             row.append(btn)
 
             # Edit Title
