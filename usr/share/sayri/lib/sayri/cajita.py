@@ -947,9 +947,80 @@ class SayriCajita(Gtk.Box):
         self.sec_scroll.set_child(self.secrets_box)
         self.secrets_view.append(self.sec_scroll)
 
-        self.card_stack.add_named(self.secrets_view, "secrets")
+        # ── View 8: Automated Routines & Cron Jobs ──
+        self.routines_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        rt_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        rt_header.set_valign(Gtk.Align.CENTER)
 
-        # ── View 7: In-Card Settings & Full Model Downloader with Live Progress ──
+        rt_title = Gtk.Label()
+        rt_title.set_markup("<span weight='700' size='10500' foreground='#f8fafc'>ROUTINES &amp; CRON JOBS</span>")
+        rt_title.set_halign(Gtk.Align.START)
+        rt_title.set_hexpand(True)
+        rt_header.append(rt_title)
+
+        add_rt_btn = Gtk.Button(label="+ Add Routine")
+        add_rt_btn.add_css_class("sayri-action-btn")
+        add_rt_btn.add_css_class("primary")
+        add_rt_btn.connect("clicked", lambda _b: self.show_create_routine_view())
+        rt_header.append(add_rt_btn)
+        self.routines_view.append(rt_header)
+
+        rt_banner = Gtk.Label()
+        rt_banner.add_css_class("sayri-info-banner")
+        rt_banner.set_markup(
+            "<b>Automated Routines:</b> Schedule automated voice briefings, login announcements, or background tasks executed autonomously by Sayri AI."
+        )
+        rt_banner.set_wrap(True)
+        rt_banner.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.routines_view.append(rt_banner)
+
+        self.routines_scroll = Gtk.ScrolledWindow()
+        self.routines_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.routines_scroll.set_propagate_natural_height(True)
+        self.routines_scroll.set_max_content_height(220)
+        self.routines_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.routines_scroll.set_child(self.routines_box)
+        self.routines_view.append(self.routines_scroll)
+
+        self.card_stack.add_named(self.routines_view, "routines")
+
+        # ── View 9: Conversation Thread Viewer (History Detail) ──
+        self.thread_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        thread_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        thread_header.set_valign(Gtk.Align.CENTER)
+
+        thread_back = Gtk.Button()
+        thread_back.set_child(_svg_icon(SVG_BACK))
+        thread_back.set_tooltip_text("Back to History")
+        thread_back.add_css_class("sayri-icon-btn")
+        thread_back.connect("clicked", lambda _b: self.switch_tab("history"))
+        thread_header.append(thread_back)
+
+        self.thread_title_lbl = Gtk.Label()
+        self.thread_title_lbl.set_markup("<span weight='700' size='10500' foreground='#f8fafc'>Conversation</span>")
+        self.thread_title_lbl.set_halign(Gtk.Align.START)
+        self.thread_title_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        self.thread_title_lbl.set_hexpand(True)
+        thread_header.append(self.thread_title_lbl)
+
+        resume_live_btn = Gtk.Button(label="Continue in Chat 💬")
+        resume_live_btn.add_css_class("sayri-action-btn")
+        resume_live_btn.add_css_class("primary")
+        resume_live_btn.connect("clicked", lambda _b: self.switch_tab("chat"))
+        thread_header.append(resume_live_btn)
+        self.thread_view.append(thread_header)
+
+        self.thread_scroll = Gtk.ScrolledWindow()
+        self.thread_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.thread_scroll.set_propagate_natural_height(True)
+        self.thread_scroll.set_max_content_height(260)
+        self.thread_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.thread_scroll.set_child(self.thread_box)
+        self.thread_view.append(self.thread_scroll)
+
+        self.card_stack.add_named(self.thread_view, "thread")
+
+        # ── View 10: In-Card Settings & Full Model Downloader with Live Progress ──
         self.settings_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         set_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         set_header.set_valign(Gtk.Align.CENTER)
@@ -971,7 +1042,7 @@ class SayriCajita(Gtk.Box):
 
         self.card_stack.add_named(self.settings_view, "settings")
 
-        # ── View 8: Generic Dynamic In-Card Subview (Zero Popups API) ──
+        # ── View 11: Generic Dynamic In-Card Subview (Zero Popups API) ──
         self.subview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         sub_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         sub_hdr.set_valign(Gtk.Align.CENTER)
@@ -1004,7 +1075,7 @@ class SayriCajita(Gtk.Box):
 
     def switch_tab(self, tab_id: str, trigger_effect: bool = True) -> None:
         """Switch between views inside the response card."""
-        is_subview = tab_id in ("subview", "thread_view")
+        is_subview = tab_id in ("subview", "thread")
         self.tab_bar.set_visible(not is_subview)
         for tid, btn in self._tab_btns.items():
             if tid == tab_id:
@@ -1019,7 +1090,11 @@ class SayriCajita(Gtk.Box):
         elif tab_id == "skills":
             self._populate_skills()
         elif tab_id == "plugins":
-            self._populate_plugins()
+            self._populate_plugins_tools()
+        elif tab_id == "gateways":
+            self._populate_gateways()
+        elif tab_id == "routines":
+            self._populate_routines()
         elif tab_id == "secrets":
             self._populate_secrets()
         elif tab_id == "settings":
@@ -1342,6 +1417,15 @@ class SayriCajita(Gtk.Box):
                 sec_badge.set_markup("<span foreground='#f59e0b' size='8500' weight='600'>⚠️ Requires Host L3</span>")
             header_row.append(sec_badge)
 
+            # Settings / Sandbox configuration button
+            cfg_btn = Gtk.Button()
+            cfg_btn.set_child(_svg_icon(SVG_SETTINGS))
+            cfg_btn.set_has_frame(False)
+            cfg_btn.add_css_class("sayri-icon-btn")
+            cfg_btn.set_tooltip_text("Configure Plugin & Sandbox Policy")
+            cfg_btn.connect("clicked", lambda _b, p=pl: self.show_edit_plugin_view(p))
+            header_row.append(cfg_btn)
+
             card.append(header_row)
 
             desc_lbl = Gtk.Label()
@@ -1353,6 +1437,68 @@ class SayriCajita(Gtk.Box):
             card.append(desc_lbl)
 
             self.plugins_box.append(card)
+
+    def show_edit_plugin_view(self, plugin_data: dict) -> None:
+        def _builder(box: Gtk.Box):
+            pid = plugin_data.get("id", "plugin")
+            pname = plugin_data.get("name", pid)
+
+            desc_lbl = Gtk.Label()
+            desc_lbl.set_markup(f"<span foreground='#f8fafc' weight='700'>{GLib.markup_escape_text(pname)}</span>\n<span size='9000' foreground='#94a3b8'>{GLib.markup_escape_text(plugin_data.get('description', ''))}</span>")
+            desc_lbl.set_halign(Gtk.Align.START)
+            desc_lbl.set_wrap(True)
+            box.append(desc_lbl)
+
+            lbl_sb = Gtk.Label(label="Minimum Required Sandbox Level:")
+            lbl_sb.set_halign(Gtk.Align.START)
+            box.append(lbl_sb)
+
+            sb_options = [
+                ("LEVEL_0_NO_EXEC", "LEVEL_0: Pure Chat (Safe in Zero-Execution)"),
+                ("LEVEL_1_READONLY", "LEVEL_1: Sandbox L1 (Read-Only)"),
+                ("LEVEL_2_ISOLATED_DEV", "LEVEL_2: Sandbox L2 (Isolated Workspace)"),
+                ("LEVEL_3_HOST_USER", "LEVEL_3: Host L3 (Active Desktop User)"),
+            ]
+            sb_model = Gtk.StringList.new([opt[1] for opt in sb_options])
+            sb_drop = Gtk.DropDown.new(sb_model, None)
+
+            cur_sb = plugin_data.get("min_sandbox_level", "LEVEL_1_READONLY")
+            for idx, opt in enumerate(sb_options):
+                if opt[0] == cur_sb:
+                    sb_drop.set_selected(idx)
+                    break
+            box.append(sb_drop)
+
+            l0_check = Gtk.CheckButton(label="Allow execution in Level 0 (Zero-Execution) agents")
+            l0_check.set_active(plugin_data.get("allow_in_level_0", False))
+            box.append(l0_check)
+
+            save_btn = Gtk.Button(label="Save Security Configuration")
+            save_btn.add_css_class("sayri-action-btn")
+            save_btn.add_css_class("primary")
+
+            def _save(_b):
+                sel_sb = sb_options[sb_drop.get_selected()][0]
+                plugin_data["min_sandbox_level"] = sel_sb
+                plugin_data["allow_in_level_0"] = l0_check.get_active()
+
+                for p_dir in [Path.home() / ".config" / "sayri" / "plugins" / pid, Path("/usr/share/sayri/plugins") / pid]:
+                    m_path = p_dir / "manifest.json"
+                    if m_path.is_file():
+                        try:
+                            m_json = json.loads(m_path.read_text(encoding="utf-8"))
+                            m_json["min_sandbox_level"] = sel_sb
+                            m_json["allow_in_level_0"] = l0_check.get_active()
+                            m_path.write_text(json.dumps(m_json, indent=2), encoding="utf-8")
+                        except Exception:
+                            pass
+                self._populate_plugins_tools()
+                self.switch_tab("plugins")
+
+            save_btn.connect("clicked", _save)
+            box.append(save_btn)
+
+        self.open_subview(f"Configure {plugin_data.get('name', 'Plugin')}", _builder, on_back_tab="plugins")
 
     # ── Channel Gateways Logic (Multi-Instance Channel Architecture) ──
     def _populate_gateways(self) -> None:
@@ -1515,6 +1661,235 @@ class SayriCajita(Gtk.Box):
     def _populate_plugins(self) -> None:
         self._populate_plugins_tools()
         self._populate_gateways()
+
+    # ── Automated Routines & Cron Jobs Logic ──
+    def _populate_routines(self) -> None:
+        while True:
+            child = self.routines_box.get_first_child()
+            if not child:
+                break
+            self.routines_box.remove(child)
+
+        from sayri.domain.cron_scheduler import cron_scheduler
+
+        routines = cron_scheduler.list_routines()
+        if not routines:
+            empty_lbl = Gtk.Label(label="No automated routines configured yet. Click (+ Add Routine) to schedule morning news, reminders, or background tasks.")
+            empty_lbl.set_halign(Gtk.Align.START)
+            empty_lbl.set_wrap(True)
+            empty_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self.routines_box.append(empty_lbl)
+            return
+
+        for r in routines:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            card.add_css_class("sayri-card-item")
+
+            header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            header_row.set_valign(Gtk.Align.CENTER)
+
+            t = Gtk.Label()
+            t.set_markup(f"<span foreground='#ffffff' weight='700' size='10000'>{GLib.markup_escape_text(r.name)}</span>")
+            t.set_halign(Gtk.Align.START)
+            t.set_hexpand(True)
+            header_row.append(t)
+
+            # Trigger badge
+            trig_badge = Gtk.Label()
+            if r.trigger == "on_login":
+                trig_str = "🌅 On Startup / Login"
+            elif r.trigger == "daily_at":
+                trig_str = f"⏰ Daily at {r.time_spec}"
+            elif r.trigger == "hourly":
+                trig_str = f"⏳ Every {r.time_spec}h"
+            else:
+                trig_str = f"⚙️ {r.trigger}"
+            trig_badge.set_markup(f"<span foreground='#38bdf8' size='8500' weight='600'>{GLib.markup_escape_text(trig_str)}</span>")
+            header_row.append(trig_badge)
+
+            # Voice badge
+            if r.speak_tts:
+                v_badge = Gtk.Label()
+                v_badge.set_markup("<span foreground='#10b981' size='8500'>🔊 Voice</span>")
+                header_row.append(v_badge)
+
+            # Edit button
+            edit_btn = Gtk.Button()
+            edit_btn.set_child(_svg_icon(SVG_SETTINGS))
+            edit_btn.set_has_frame(False)
+            edit_btn.add_css_class("sayri-icon-btn")
+            edit_btn.set_tooltip_text("Edit Routine")
+            edit_btn.connect("clicked", lambda _b, rt=r: self.show_edit_routine_view(rt))
+            header_row.append(edit_btn)
+
+            # Delete button
+            del_btn = Gtk.Button()
+            del_btn.set_child(_svg_icon(SVG_TRASH))
+            del_btn.set_has_frame(False)
+            del_btn.add_css_class("sayri-icon-btn")
+            del_btn.set_tooltip_text("Delete Routine")
+            del_btn.connect("clicked", lambda _b, r_id=r.id: (cron_scheduler.delete_routine(r_id), self._populate_routines()))
+            header_row.append(del_btn)
+
+            # Enable/Disable switch
+            sw = Gtk.Switch()
+            sw.set_active(r.enabled)
+            sw.set_valign(Gtk.Align.CENTER)
+            def _on_sw_toggle(switch, _param, r_id=r.id):
+                cron_scheduler.toggle_routine(r_id, switch.get_active())
+            sw.connect("notify::active", _on_sw_toggle)
+            header_row.append(sw)
+
+            card.append(header_row)
+
+            # Subtitle / prompt preview
+            sub_lbl = Gtk.Label()
+            p_desc = r.description or r.prompt
+            sub_lbl.set_markup(f"<span foreground='#94a3b8' size='9000'><i>“{GLib.markup_escape_text(p_desc[:80])}…”</i></span>")
+            sub_lbl.set_halign(Gtk.Align.START)
+            sub_lbl.set_wrap(True)
+            card.append(sub_lbl)
+
+            self.routines_box.append(card)
+
+    def show_create_routine_view(self) -> None:
+        def _builder(box: Gtk.Box):
+            lbl_name = Gtk.Label(label="Routine Name:")
+            lbl_name.set_halign(Gtk.Align.START)
+            box.append(lbl_name)
+
+            name_entry = Gtk.Entry()
+            name_entry.set_placeholder_text("e.g. Morning Briefing & News")
+            name_entry.add_css_class("sayri-settings-entry")
+            box.append(name_entry)
+
+            lbl_prompt = Gtk.Label(label="Instructions / Prompt for Sayri:")
+            lbl_prompt.set_halign(Gtk.Align.START)
+            box.append(lbl_prompt)
+
+            prompt_entry = Gtk.Entry()
+            prompt_entry.set_placeholder_text("e.g. Sayri, dame un saludo matutino y el resumen de noticias de hoy en 3 frases.")
+            prompt_entry.add_css_class("sayri-settings-entry")
+            box.append(prompt_entry)
+
+            lbl_trig = Gtk.Label(label="Trigger Schedule:")
+            lbl_trig.set_halign(Gtk.Align.START)
+            box.append(lbl_trig)
+
+            trig_options = [
+                ("on_login", "🌅 On Startup / User Login"),
+                ("daily_at", "⏰ Daily at Specific Time (HH:MM)"),
+                ("hourly", "⏳ Periodic Interval (Every X Hours)"),
+            ]
+            trig_model = Gtk.StringList.new([opt[1] for opt in trig_options])
+            trig_drop = Gtk.DropDown.new(trig_model, None)
+            trig_drop.set_selected(0)
+            box.append(trig_drop)
+
+            lbl_spec = Gtk.Label(label="Time / Interval Parameter (e.g. 09:00 or 2 for hours):")
+            lbl_spec.set_halign(Gtk.Align.START)
+            box.append(lbl_spec)
+
+            spec_entry = Gtk.Entry()
+            spec_entry.set_text("09:00")
+            spec_entry.add_css_class("sayri-settings-entry")
+            box.append(spec_entry)
+
+            voice_check = Gtk.CheckButton(label="🔊 Read response aloud with Voice (TTS)")
+            voice_check.set_active(True)
+            box.append(voice_check)
+
+            notify_check = Gtk.CheckButton(label="🔔 Show Desktop Notification")
+            notify_check.set_active(True)
+            box.append(notify_check)
+
+            save_btn = Gtk.Button(label="Create Routine")
+            save_btn.add_css_class("sayri-action-btn")
+            save_btn.add_css_class("primary")
+
+            def _save(_b):
+                from sayri.domain.cron_scheduler import Routine, cron_scheduler
+                nm = name_entry.get_text().strip()
+                pr = prompt_entry.get_text().strip()
+                if nm and pr:
+                    sel_trig = trig_options[trig_drop.get_selected()][0]
+                    rid = re.sub(r"[^a-zA-Z0-9_\-]", "-", nm.lower()).strip("-") or f"routine-{int(time.time())}"
+                    new_r = Routine(
+                        id=rid,
+                        name=nm,
+                        description=f"Scheduled routine ({sel_trig})",
+                        trigger=sel_trig,
+                        time_spec=spec_entry.get_text().strip() or "09:00",
+                        prompt=pr,
+                        speak_tts=voice_check.get_active(),
+                        notify_desktop=notify_check.get_active(),
+                        enabled=True,
+                    )
+                    cron_scheduler.save_routine(new_r)
+                    self._populate_routines()
+                    self.switch_tab("routines")
+
+            save_btn.connect("clicked", _save)
+            box.append(save_btn)
+
+        self.open_subview("Add Routine / Cron Job", _builder, on_back_tab="routines")
+
+    def show_edit_routine_view(self, routine: Any) -> None:
+        def _builder(box: Gtk.Box):
+            lbl_name = Gtk.Label(label="Routine Name:")
+            lbl_name.set_halign(Gtk.Align.START)
+            box.append(lbl_name)
+
+            name_entry = Gtk.Entry()
+            name_entry.set_text(routine.name)
+            name_entry.add_css_class("sayri-settings-entry")
+            box.append(name_entry)
+
+            lbl_prompt = Gtk.Label(label="Instructions / Prompt for Sayri:")
+            lbl_prompt.set_halign(Gtk.Align.START)
+            box.append(lbl_prompt)
+
+            prompt_entry = Gtk.Entry()
+            prompt_entry.set_text(routine.prompt)
+            prompt_entry.add_css_class("sayri-settings-entry")
+            box.append(prompt_entry)
+
+            lbl_spec = Gtk.Label(label=f"Time / Parameter (Trigger: {routine.trigger}):")
+            lbl_spec.set_halign(Gtk.Align.START)
+            box.append(lbl_spec)
+
+            spec_entry = Gtk.Entry()
+            spec_entry.set_text(routine.time_spec)
+            spec_entry.add_css_class("sayri-settings-entry")
+            box.append(spec_entry)
+
+            voice_check = Gtk.CheckButton(label="🔊 Read response aloud with Voice (TTS)")
+            voice_check.set_active(routine.speak_tts)
+            box.append(voice_check)
+
+            notify_check = Gtk.CheckButton(label="🔔 Show Desktop Notification")
+            notify_check.set_active(routine.notify_desktop)
+            box.append(notify_check)
+
+            save_btn = Gtk.Button(label="Save Changes")
+            save_btn.add_css_class("sayri-action-btn")
+            save_btn.add_css_class("primary")
+
+            def _save(_b):
+                from sayri.domain.cron_scheduler import cron_scheduler
+                routine.name = name_entry.get_text().strip() or routine.name
+                routine.prompt = prompt_entry.get_text().strip() or routine.prompt
+                routine.time_spec = spec_entry.get_text().strip() or routine.time_spec
+                routine.speak_tts = voice_check.get_active()
+                routine.notify_desktop = notify_check.get_active()
+                cron_scheduler.save_routine(routine)
+                self._populate_routines()
+                self.switch_tab("routines")
+
+            save_btn.connect("clicked", _save)
+            box.append(save_btn)
+
+        self.open_subview(f"Edit Routine: {routine.name}", _builder, on_back_tab="routines")
 
     # ── Zero-Plaintext Secrets Vault Logic ──
     def _populate_secrets(self) -> None:

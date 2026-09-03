@@ -276,6 +276,14 @@ class SayriApp(Gtk.Application):
         except Exception as e:
             print(f"[Sayri] Gateway supervisor auto-start notice: {e}")
 
+        # Auto-start cron and automated routines
+        try:
+            from sayri.domain.cron_scheduler import cron_scheduler
+            cron_scheduler.app = self
+            cron_scheduler.start()
+        except Exception as e:
+            print(f"[Sayri] Cron scheduler startup notice: {e}")
+
     def _launch_indicator(self) -> None:
         if hasattr(self, "_indicator_proc") and self._indicator_proc and self._indicator_proc.poll() is None:
             return
