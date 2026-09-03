@@ -54,14 +54,12 @@ install -d %{buildroot}
 cp -a usr %{buildroot}/
 cp -a etc %{buildroot}/
 
-# Ensure binaries are executable and paths resolve.
+# Ensure binaries are executable.
 chmod 0755 %{buildroot}/usr/bin/sayri
 chmod 0755 %{buildroot}/usr/bin/sayri-indicator
 chmod 0755 %{buildroot}/usr/bin/sayri-settings
 chmod 0755 %{buildroot}/usr/bin/sayri-skills
 chmod 0755 %{buildroot}/usr/bin/sayri-plugins
-chmod 0755 %{buildroot}/usr/share/sayri/lib/sayri/domain/*.py
-chmod 0644 %{buildroot}/usr/share/applications/sayri.desktop
 
 %files
 %doc README.md
@@ -69,6 +67,8 @@ chmod 0644 %{buildroot}/usr/share/applications/sayri.desktop
 %{_datadir}/sayri/*
 %{_datadir}/applications/sayri.desktop
 %{_datadir}/icons/hicolor/*
+%{_datadir}/pixmaps/sayri.png
+%{_datadir}/pixmaps/sayri.svg
 %{_bindir}/sayri
 %{_bindir}/sayri-indicator
 %{_bindir}/sayri-settings
@@ -92,5 +92,5 @@ fi
 exit 0
 
 %changelog
-* Wed Sep 03 2026 Jaice <info@inled.es> - 0.1.3-1
+* Thu Sep 03 2026 Jaice <info@inled.es> - 0.1.3-1
 - Initial RPM packaging of Sayri 0.1.3

@@ -115,19 +115,16 @@ build_flatpak() {
     command -v flatpak-builder >/dev/null || { warn "flatpak-builder not found, skipping Flatpak"; return 1; }
     local work
     work="$(mktemp -d "${TMPDIR:-/tmp}/sayri-flatpak.XXXXXX")"
-    # flatpak-builder resolves `dir` source paths relative to the manifest root
-    # (the build dir it is invoked on) and requires them to live beneath it.
-    # Assemble a temp root with the manifest next to usr/ and etc/ and build
-    # there. The dir is fresh so --force-clean is not needed.
-    cp "$ROOT/packaging/io.github.inled.sayri.yml" "$work/io.github.inled.sayri.yml"
-    cp -a "$ROOT/usr" "$work/usr"
-    cp -a "$ROOT/etc" "$work/etc"
-    # --user keeps the runtime/cache in the calling user's home so non-root CI
-    # runners and headless systems work without a system installation.
-    # --install-deps-from=flathub pulls org.gnome.Platform/Sdk automatically
-    # (the flathub remote must already be added).
+    # flatpak-builder resolves `dir` source paths relative to the manifest
+    # file's directory (packaging/), so ../usr and ../etc point back at the
+    # repo root. It requires an EMPTY build directory, hence the fresh $work
+    # subdir + --force-clean. --user keeps the runtime/cache in the calling
+    # user's home so non-root CI runners and headless systems work without a
+    # system installation. --install-deps-from=flathub pulls
+    # org.gnome.Platform/Sdk automatically (the flathub remote must exist).
     if ! flatpak-builder --user --install-deps-from=flathub --state-dir="$work/.state" \
-        --repo="$work/repo" "$work" "$work/io.github.inled.sayri.yml"; then
+        --repo="$work/repo" --force-clean "$work/build" \
+        "$ROOT/packaging/io.github.inled.sayri.yml"; then
         rm -rf "$work"
         die "flatpak-builder failed"
     fi
