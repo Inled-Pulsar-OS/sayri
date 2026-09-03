@@ -1,10 +1,14 @@
 # ==============================================================================
 # Sayri - Flatpak manifest (es.inled.sayri)
 #
-# Build with:
+# Build with (from a dir that contains this manifest next to usr/ and etc/):
 #   flatpak-builder --user --install --force-clean \
-#       build-dir packaging/io.github.inled.sayri.yml
+#       build-dir io.github.inled.sayri.yml
 #   flatpak build-bundle ~/.local/share/flatpak/repo sayri.flatpak es.inled.sayri
+#
+# The `dir` sources (usr/, etc/) are resolved relative to the manifest root
+# (the flatpak-builder build dir); see build-packages.sh which assembles a
+# temp root containing this manifest plus usr/ and etc/ and builds from there.
 #
 # Known limitations inside the Flatpak sandbox:
 #   - Runs on the org.gnome.Platform runtime: GTK4, WebKitGTK 6.0 and GObject
@@ -92,6 +96,6 @@ modules:
       - cp -a usr/share/icons/hicolor/. /app/share/icons/hicolor/
     sources:
       - type: dir
-        path: ../usr
+        path: usr
       - type: dir
-        path: ../etc
+        path: etc
