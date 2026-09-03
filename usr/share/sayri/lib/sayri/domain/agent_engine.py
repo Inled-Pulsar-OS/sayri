@@ -35,25 +35,40 @@ class AgentEngine:
         self._query_counter = 0
 
     def build_system_prompt(self, profile: AgentProfile) -> str:
-        """Constructs a token-efficient system prompt with self-awareness of sub-agents, skills and sandboxing."""
+        """Constructs a token-efficient system prompt with self-awareness of sub-agents, skills, plugins and strict sandboxing."""
         installed = skills.list_skills()
         skills_summary = ""
-        if installed:
-            items = [f"- {s['name']}: {s['description']}" for s in installed[:15]]
-            skills_summary = "\nINSTALLED SKILLS (read details with the 'read_skill' tool):\n" + "\n".join(items)
+        is_level_0 = profile.sandbox.level == SandboxLevel.LEVEL_0_NO_EXEC
+        is_read_only = profile.sandbox.level in (SandboxLevel.LEVEL_0_NO_EXEC, SandboxLevel.LEVEL_1_READONLY)
+
+        if installed and not is_level_0:
+            # Filter skills by profile.allowed_skills if specified
+            filtered_skills = []
+            for s in installed:
+                s_id = s.get("id") or s.get("name", "")
+                if profile.allowed_skills and s_id not in profile.allowed_skills and s.get("name") not in profile.allowed_skills:
+                    continue
+                filtered_skills.append(s)
+
+            if filtered_skills:
+                items = [f"- {s['name']}: {s['description']}" for s in filtered_skills[:15]]
+                skills_summary = "\nAUTHORIZED SKILLS (read details with the 'read_skill' tool):\n" + "\n".join(items)
 
         sandbox_info = f"Active Isolation Level: {profile.sandbox.level.value}."
-        if profile.sandbox.level == SandboxLevel.LEVEL_0_NO_EXEC:
-            sandbox_info += " (STRICTLY FORBIDDEN TO EXECUTE BASH/SYSTEM COMMANDS; you are a purely conversational agent. If asked to run something, explain that your LEVEL_0_NO_EXEC sandbox forbids it)."
+        if is_level_0:
+            sandbox_info += " (STRICTLY FORBIDDEN TO EXECUTE BASH/SYSTEM COMMANDS OR HOST PLUGINS; you are in a pure conversational sandbox. Any attempt to execute commands will be intercepted and blocked by the security sandbox)."
         elif profile.sandbox.level in (SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
-            sandbox_info += " (You are in an isolated Bubblewrap container with no Wayland/X11 graphical server. You CANNOT open graphical application windows on the host screen)."
+            sandbox_info += " (You are in an isolated Bubblewrap container with no Wayland/X11 graphical server. You CANNOT open graphical application windows or modify host files outside your isolated sandbox)."
+
+        custom_instr = f"\nSPECIFIC AGENT INSTRUCTIONS:\n{profile.custom_instructions}\n" if getattr(profile, "custom_instructions", "") else ""
 
         base = (
             f"You are Sayri, the intelligent assistant, agentic orchestrator and operating-system copilot in Pulsar OS.\n"
             f"Active profile: {profile.name} (ID: {profile.id}).\n"
-            f"Security: {sandbox_info}\n\n"
+            f"Security: {sandbox_info}\n"
+            f"{custom_instr}\n"
             "SANDBOX AND EXECUTION POLICY:\n"
-            "- LEVEL_0_NO_EXEC: Purely conversational mode. Blocked from executing commands.\n"
+            "- LEVEL_0_NO_EXEC: Purely conversational mode. Blocked from executing commands or touching the host.\n"
             "- LEVEL_1_READONLY / LEVEL_2_ISOLATED_DEV: Isolated Bubblewrap environment for read, inspection or isolated development operations. It has no access to the display server (Wayland/X11); therefore, it CANNOT open graphical applications (such as calculator, editors or browsers) on the user's screen.\n"
             "- LEVEL_3_HOST_USER: Full access to the local user's host. It can interact with the system and launch graphical applications (e.g. `gnome-calculator &` or `gtk-launch org.gnome.Calculator`).\n"
             "- LEVEL_4_HOST_ROOT: Administrative access with Polkit elevation (pkexec).\n\n"
@@ -64,10 +79,10 @@ class AgentEngine:
             "4. Memory & Conversation History: You maintain context with recent messages. If you need details from earlier in the conversation, you can emit ```search_history <keyword>``` to query past messages.\n"
             f"{skills_summary}\n\n"
             "CRITICAL EXECUTION AND TRUTHFULNESS RULES:\n"
-            "1. If you need to perform an action on the system, emit a block:\n"
+            "1. If you need to perform an authorized action on the system, emit a block:\n"
             "```bash\n<command>\n```\n"
             "2. ABSOLUTE TRUTHFULNESS: NEVER claim an application has opened or an action has completed unless the system observation confirms exit code 0 with no sandbox errors.\n"
-            "3. If a command fails due to sandbox (non-zero exit code or display/permission error), explain to the user with total honesty and clarity the sandbox restriction that prevented the action and how to fix it (for example by switching the gateway/agent to LEVEL_3_HOST_USER).\n"
+            "3. If a command fails due to sandbox (non-zero exit code or display/permission error), explain to the user with total honesty and clarity the sandbox restriction that prevented the action and how to fix it.\n"
             "4. Always respond in the language the user spoke to you in, naturally, concisely and pleasantly (1 to 3 spoken sentences for voice)."
         )
         return base
@@ -328,9 +343,20 @@ class AgentEngine:
                 cmd = m.group(1).strip()
                 if cmd:
                     on_tool_start(cmd)
-                    retcode, output, duration = self.sandbox.execute(
-                        cmd, profile.sandbox, agent_id=profile.id
-                    )
+
+                    # Strict Sandbox Level 0 Enforcement: Block without executing
+                    if profile.sandbox.level == SandboxLevel.LEVEL_0_NO_EXEC:
+                        retcode = 126
+                        output = (
+                            "🔒 [SECURITY POLICY LEVEL_0_NO_EXEC]: Command execution blocked by sandbox. "
+                            "This agent operates in pure conversational mode and cannot execute bash commands, run scripts, or touch host files."
+                        )
+                        duration = 1.0
+                    else:
+                        retcode, output, duration = self.sandbox.execute(
+                            cmd, profile.sandbox, agent_id=profile.id
+                        )
+
                     on_tool_finish(cmd, output, retcode)
 
                     # Redact any accidental secret tokens from tool output

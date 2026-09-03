@@ -1,5 +1,5 @@
 Package: sayri
-Version: __VERSION__
+Version: __VERSION__.1
 Section: utils
 Priority: optional
 Architecture: all

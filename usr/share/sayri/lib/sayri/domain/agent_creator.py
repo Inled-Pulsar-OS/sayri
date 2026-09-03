@@ -65,7 +65,9 @@ class AgentCreator:
                         allow_network=bool(data.get("sandbox", {}).get("allow_network", True)),
                     ),
                     allowed_skills=data.get("allowed_skills", []),
-                    allowed_tools=data.get("allowed_tools", ["bash"]),
+                    allowed_plugins=data.get("allowed_plugins", []),
+                    allowed_tools=data.get("allowed_tools", ["bash", "read_skill", "search_history"]),
+                    custom_instructions=data.get("custom_instructions", ""),
                     created_at=data.get("created_at", time.time()),
                     is_builtin=False,
                 )
@@ -100,6 +102,7 @@ class AgentCreator:
             "name": profile.name,
             "description": profile.description,
             "system_prompt": profile.system_prompt,
+            "custom_instructions": getattr(profile, "custom_instructions", ""),
             "model": {
                 "provider": profile.model.provider,
                 "model_name": profile.model.model_name,
@@ -112,6 +115,7 @@ class AgentCreator:
                 "allow_network": profile.sandbox.allow_network,
             },
             "allowed_skills": profile.allowed_skills,
+            "allowed_plugins": getattr(profile, "allowed_plugins", []),
             "allowed_tools": profile.allowed_tools,
             "created_at": profile.created_at,
         }

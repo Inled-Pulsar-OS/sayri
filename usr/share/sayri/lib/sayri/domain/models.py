@@ -97,7 +97,9 @@ class AgentProfile:
     model: AgentModelConfig = field(default_factory=AgentModelConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     allowed_skills: List[str] = field(default_factory=list)
-    allowed_tools: List[str] = field(default_factory=lambda: ["bash", "read_skill"])
+    allowed_plugins: List[str] = field(default_factory=list)
+    allowed_tools: List[str] = field(default_factory=lambda: ["bash", "read_skill", "search_history"])
+    custom_instructions: str = ""
     created_at: float = field(default_factory=time.time)
     is_builtin: bool = False
 
@@ -134,8 +136,12 @@ class PluginManifest:
     author: str
     description: str
     entrypoint: str
+    plugin_type: str = "tool"  # "tool", "gateway", "mcp"
     capabilities: List[str] = field(default_factory=list)
     allowed_domains: List[str] = field(default_factory=list)
     target_agent_id: str = "default"
     sandbox_level: SandboxLevel = SandboxLevel.LEVEL_1_READONLY
+    min_sandbox_level: SandboxLevel = SandboxLevel.LEVEL_1_READONLY
+    allow_in_level_0: bool = False
     is_authorized: bool = False
+
