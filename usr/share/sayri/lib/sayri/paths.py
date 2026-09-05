@@ -9,6 +9,7 @@ developed/run without installing (see the wrapper script in usr/bin/sayri):
 """
 
 import os
+from typing import Optional
 
 DEFAULT_DATA_DIR = "/usr/share/sayri/web"
 DEFAULT_CONFIG_DIR = "~/.config/sayri"

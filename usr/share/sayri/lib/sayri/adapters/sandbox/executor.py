@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from typing import Tuple
 
@@ -103,55 +104,66 @@ class SandboxExecutor:
             if k in os.environ and k not in env:
                 env[k] = os.environ[k]
 
-        # If it is an explicit background or GUI launcher command
         is_bg = command.rstrip().endswith("&") or command.startswith("gtk-launch ") or command.startswith("xdg-open ")
-        if is_bg and not elevated:
+        # Observation window: wait at least 2.0s for background / GUI launches to detect early startup crash/errors,
+        # or full timeout for regular sync commands.
+        wait_limit = min(timeout, 2.5) if is_bg else timeout
+
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as tmp_out, \
+             tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as tmp_err:
             try:
                 proc = subprocess.Popen(
                     command,
                     shell=True,
                     env=env,
+                    stdout=tmp_out,
+                    stderr=tmp_err,
                     start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
                 )
-                time.sleep(0.1)
+
+                poll_start = time.monotonic()
+                while time.monotonic() - poll_start < wait_limit:
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.08)
+
                 duration = (time.monotonic() - start_time) * 1000.0
-                return (0, f"Command launched in background on the host (PID: {proc.pid})", duration)
+                retcode = proc.poll()
+
+                # Case 1: Process finished or crashed within the observation window
+                if retcode is not None:
+                    tmp_out.seek(0)
+                    tmp_err.seek(0)
+                    out_text = tmp_out.read().strip()
+                    err_text = tmp_err.read().strip()
+                    combined = (out_text + "\n" + err_text).strip()
+
+                    if retcode in (126, 127) and elevated:
+                        combined = "The user cancelled or denied the graphical administrator authorization (Polkit)."
+                    elif retcode != 0:
+                        if not combined:
+                            combined = f"(Process exited with error code {retcode})"
+                    elif not combined:
+                        combined = f"(Command completed with exit code 0)"
+
+                    return (retcode, combined, duration)
+
+                # Case 2: Process is still alive and running healthily in background
+                tmp_out.seek(0)
+                tmp_err.seek(0)
+                partial_out = tmp_out.read().strip()
+                partial_err = tmp_err.read().strip()
+                combined_partial = (partial_out + "\n" + partial_err).strip()
+
+                msg = f"✓ Command started and continues running in the background on the host (PID: {proc.pid})."
+                if combined_partial:
+                    msg += f"\nOutput:\n{combined_partial}"
+
+                return (0, msg, duration)
+
             except Exception as exc:
                 duration = (time.monotonic() - start_time) * 1000.0
-                return (1, f"Error starting background process: {exc}", duration)
-
-        try:
-            res = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-            )
-            out = (res.stdout + "\n" + res.stderr).strip()
-            retcode = res.returncode
-            if retcode in (126, 127) and elevated:
-                out = "The user cancelled or denied the graphical administrator authorization (Polkit)."
-            elif not out:
-                out = f"(Command completed with exit code {res.returncode})"
-            duration = (time.monotonic() - start_time) * 1000.0
-            return (retcode, out, duration)
-        except subprocess.TimeoutExpired as exc:
-            raw_out = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-            raw_err = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-            partial = (raw_out + "\n" + raw_err).strip()
-            duration = (time.monotonic() - start_time) * 1000.0
-            return (
-                0,
-                partial or "(The command continues running in the background on the host)",
-                duration,
-            )
-        except Exception as exc:
-            duration = (time.monotonic() - start_time) * 1000.0
-            return (1, f"Execution error on the host: {exc}", duration)
+                return (1, f"Execution error on the host: {exc}", duration)
 
     def _run_bwrap(
         self,

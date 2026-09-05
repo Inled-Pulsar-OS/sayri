@@ -27,6 +27,27 @@ def test_build_payload():
     assert "max_tokens" not in p2
 
 
+def test_sanitize_messages():
+    from sayri.llm import sanitize_messages
+
+    # Test merging of multiple system messages
+    raw = [
+        {"role": "system", "content": "You are Sayri."},
+        {"role": "user", "content": "Hello"},
+        {"role": "system", "content": "Context Note: User likes Python."},
+        {"role": "assistant", "content": "Hi!"},
+        {"role": "user", "content": "How are you?"},
+    ]
+    cleaned = sanitize_messages(raw)
+    assert len(cleaned) == 4
+    assert cleaned[0]["role"] == "system"
+    assert "You are Sayri." in cleaned[0]["content"]
+    assert "Context Note: User likes Python." in cleaned[0]["content"]
+    assert cleaned[1] == {"role": "user", "content": "Hello"}
+    assert cleaned[2] == {"role": "assistant", "content": "Hi!"}
+    assert cleaned[3] == {"role": "user", "content": "How are you?"}
+
+
 def test_stream_chat_sse():
     if not HAS_HTTPX:
         print("  SKIP test_stream_chat_sse (httpx no disponible)")

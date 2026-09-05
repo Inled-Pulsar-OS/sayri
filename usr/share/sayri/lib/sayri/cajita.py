@@ -47,13 +47,33 @@ from sayri.domain.models import (
 from sayri.domain.secrets_manager import secrets_manager
 
 CAJITA_CSS = b"""
-.sayri-cajita-container,
-.sayri-pill-container,
+.sayri-cajita-container {
+    background: none;
+    background-color: transparent;
+}
+
+.sayri-pill-box {
+    background-color: rgba(13, 20, 36, 0.94);
+    border-radius: 26px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.sayri-card-box {
+    background-color: rgba(13, 20, 36, 0.94);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
 .sayri-pill-row,
 .sayri-pill-row > * {
     background: none;
     background-color: transparent;
     background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
 }
 
 entry.sayri-pill-entry,
@@ -234,7 +254,45 @@ progressbar.sayri-progress > trough > progress {
     background: linear-gradient(90deg, #7c166e, #1e74fb);
     border-radius: 9999px;
 }
+
+.sayri-attachment-chip {
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: rgba(0, 0, 0, 0.35);
+    margin-left: 2px;
+    margin-right: 6px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    padding: 0px;
+}
+
+.sayri-attachment-pic {
+    border-radius: 7px;
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
+}
+
+.sayri-attachment-hover-overlay {
+    background: rgba(0, 0, 0, 0.65);
+    border-radius: 7px;
+    opacity: 0.0;
+    transition: opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), background-color 180ms ease;
+}
+
+.sayri-attachment-hover-overlay.hovered {
+    opacity: 1.0;
+    background: rgba(220, 38, 38, 0.88);
+}
 """
+
+SVG_CLOSE_BOLD = """<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+<line x1="18" y1="6" x2="6" y2="18"></line>
+<line x1="6" y1="6" x2="18" y2="18"></line>
+</svg>"""
 
 SVG_MIC = """<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/>
@@ -259,6 +317,28 @@ SVG_EDIT = """<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" vie
 SVG_TRASH = """<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
 </svg>"""
+
+def _load_square_thumbnail(path: str, size: int = 32) -> Optional[Gdk.Texture]:
+    """Loads an image, center-crops to a strict 1:1 square, and scales it to size x size."""
+    try:
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
+        w = pixbuf.get_width()
+        h = pixbuf.get_height()
+        if w > h:
+            x = (w - h) // 2
+            y = 0
+            crop = pixbuf.new_subpixbuf(x, y, h, h)
+        elif h > w:
+            x = 0
+            y = (h - w) // 2
+            crop = pixbuf.new_subpixbuf(x, y, w, w)
+        else:
+            crop = pixbuf
+        scaled = crop.scale_simple(size, size, GdkPixbuf.InterpType.BILINEAR)
+        return Gdk.Texture.new_for_pixbuf(scaled)
+    except Exception as e:
+        print(f"[Sayri] Square thumbnail load notice: {e}")
+        return None
 
 SVG_SETTINGS = """<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -385,6 +465,13 @@ class ChromaBackground(Gtk.DrawingArea):
         self.angle = 0.0
         self._anim_tag = None
         self._memory_bloom_alpha = 0.0
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        if is_pill:
+            self.set_content_width(420)
+            self.set_content_height(52)
+        else:
+            self.set_content_width(420)
         self.set_draw_func(self._draw)
 
     def set_mode(self, mode: str) -> None:
@@ -426,7 +513,7 @@ class ChromaBackground(Gtk.DrawingArea):
         return True
 
     def _draw(self, area, cr: cairo.Context, w: int, h: int) -> None:
-        pad = 6.0
+        pad = 2.0
         r = (24.0 if self.is_pill else 18.0)
         bx, by, bw, bh = pad, pad, w - 2 * pad, h - 2 * pad
 
@@ -550,9 +637,13 @@ class SayriCajita(Gtk.Box):
         # ── 1. Top Input Pill ─────────────────────────────────────────
         self.pill_overlay = Gtk.Overlay()
         self.pill_overlay.set_size_request(420, 52)
+        self.pill_overlay.add_css_class("sayri-pill-box")
+        self.pill_overlay.add_css_class("sayri-pill-overlay")
 
         self.pill_bg = ChromaBackground(is_pill=True)
         self.pill_bg.set_can_target(False)
+        self.pill_bg.set_hexpand(True)
+        self.pill_bg.set_vexpand(True)
         self.pill_overlay.set_child(self.pill_bg)
 
         pill_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -570,6 +661,49 @@ class SayriCajita(Gtk.Box):
         self.siri_btn.set_tooltip_text("Toggle Preferences & Navigation")
         self.siri_btn.connect("clicked", lambda _b: self.toggle_navigation())
         pill_row.append(self.siri_btn)
+
+        # Inline Google-style Attachment Chip (Inside input pill, beside logo)
+        self.attach_chip = Gtk.Overlay()
+        self.attach_chip.set_visible(False)
+        self.attach_chip.add_css_class("sayri-attachment-chip")
+        self.attach_chip.set_valign(Gtk.Align.CENTER)
+        self.attach_chip.set_size_request(32, 32)
+
+        self.attach_pic = Gtk.Picture()
+        self.attach_pic.set_size_request(32, 32)
+        self.attach_pic.set_can_shrink(True)
+        self.attach_pic.set_content_fit(Gtk.ContentFit.COVER)
+        self.attach_pic.add_css_class("sayri-attachment-pic")
+        self.attach_chip.set_child(self.attach_pic)
+
+        # Full-cover hover layer with centered bold ✕ and smooth fade animation
+        self.attach_hover_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.attach_hover_box.add_css_class("sayri-attachment-hover-overlay")
+        self.attach_hover_box.set_hexpand(True)
+        self.attach_hover_box.set_vexpand(True)
+        self.attach_hover_box.set_halign(Gtk.Align.FILL)
+        self.attach_hover_box.set_valign(Gtk.Align.FILL)
+
+        x_icon = _svg_icon(SVG_CLOSE_BOLD)
+        x_icon.set_hexpand(True)
+        x_icon.set_vexpand(True)
+        x_icon.set_halign(Gtk.Align.CENTER)
+        x_icon.set_valign(Gtk.Align.CENTER)
+        self.attach_hover_box.append(x_icon)
+        self.attach_chip.add_overlay(self.attach_hover_box)
+
+        # Click gesture to discard attachment
+        click_ctrl = Gtk.GestureClick.new()
+        click_ctrl.connect("released", lambda _g, _n, _x, _y: self.clear_attached_image())
+        self.attach_chip.add_controller(click_ctrl)
+
+        # Smooth hover transition controller
+        hover_ctrl = Gtk.EventControllerMotion.new()
+        hover_ctrl.connect("enter", lambda _c, _x, _y: self.attach_hover_box.add_css_class("hovered"))
+        hover_ctrl.connect("leave", lambda _c: self.attach_hover_box.remove_css_class("hovered"))
+        self.attach_chip.add_controller(hover_ctrl)
+
+        pill_row.append(self.attach_chip)
 
         # Text Entry
         self.entry = Gtk.Entry()
@@ -620,6 +754,7 @@ class SayriCajita(Gtk.Box):
         self.card_overlay = Gtk.Overlay()
         self.card_overlay.set_size_request(420, -1)
         self.card_overlay.set_hexpand(True)
+        self.card_overlay.add_css_class("sayri-card-box")
 
         self.card_bg = ChromaBackground(is_pill=False)
         self.card_bg.set_can_target(False)
@@ -947,6 +1082,8 @@ class SayriCajita(Gtk.Box):
         self.sec_scroll.set_child(self.secrets_box)
         self.secrets_view.append(self.sec_scroll)
 
+        self.card_stack.add_named(self.secrets_view, "secrets")
+
         # ── View 8: Automated Routines & Cron Jobs ──
         self.routines_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rt_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1125,13 +1262,38 @@ class SayriCajita(Gtk.Box):
     def show_chat_view(self) -> None:
         self.switch_tab("chat")
 
+    def set_attached_image(self, path: str) -> None:
+        self._attached_image = path
+        if path and os.path.isfile(path):
+            texture = _load_square_thumbnail(path, 32)
+            if texture:
+                self.attach_pic.set_paintable(texture)
+            else:
+                self.attach_pic.set_filename(path)
+            self.attach_hover_box.remove_css_class("hovered")
+            self.attach_chip.set_visible(True)
+            self.entry.grab_focus()
+            self.entry.set_placeholder_text("Ask about this screenshot…")
+        else:
+            self.attach_chip.set_visible(False)
+
+    def clear_attached_image(self) -> None:
+        self._attached_image = None
+        self.attach_chip.set_visible(False)
+        self.entry.set_placeholder_text("Ask Sayri anything…")
+
     def _on_entry_activate(self, entry: Gtk.Entry) -> None:
         text = entry.get_text().strip()
-        if text:
+        attached_img = getattr(self, "_attached_image", None)
+        if text or attached_img:
             entry.set_text("")
             self.clear()
             self.switch_tab("chat", trigger_effect=False)
-            self.app.send_text(text)
+            prompt = text or "Analiza esta imagen seleccionada."
+            if attached_img:
+                prompt = f"[Attachment: {attached_img}]\n{prompt}"
+            self.app.send_text(prompt)
+            self.clear_attached_image()
 
     def _on_entry_changed(self, entry: Gtk.Entry) -> None:
         text = entry.get_text().strip()
@@ -1277,7 +1439,9 @@ class SayriCajita(Gtk.Box):
 
             sub = Gtk.Label()
             sb_text = ag.sandbox.level.value
-            sub.set_markup(f"<span foreground='#94a3b8' size='9000'>{sb_text} • Model: <tt>{GLib.markup_escape_text(ag.model.model_name)}</tt></span>")
+            loop_badge = " • <span foreground='#38bdf8'>🔄 Autonomous Loop</span>" if getattr(ag, "investigation_loop", True) else ""
+            pref_badge = " • <span foreground='#a855f7'>🧠 Preference Learning</span>" if getattr(ag, "reinforcement_learning", True) else ""
+            sub.set_markup(f"<span foreground='#94a3b8' size='9000'>{sb_text}{loop_badge}{pref_badge} • Model: <tt>{GLib.markup_escape_text(ag.model.model_name)}</tt></span>")
             sub.set_halign(Gtk.Align.START)
 
             v.append(t)
@@ -1296,6 +1460,15 @@ class SayriCajita(Gtk.Box):
                 self.switch_tab("chat")
             sw_btn.connect("clicked", _switch)
             row.append(sw_btn)
+
+            # Settings / Edit button (for all agents)
+            cfg_ag_btn = Gtk.Button()
+            cfg_ag_btn.set_child(_svg_icon(SVG_SETTINGS))
+            cfg_ag_btn.set_has_frame(False)
+            cfg_ag_btn.add_css_class("sayri-icon-btn")
+            cfg_ag_btn.set_tooltip_text("Agent Settings & Autonomous Loop")
+            cfg_ag_btn.connect("clicked", lambda _b, profile=ag: self._prompt_edit_agent(profile))
+            row.append(cfg_ag_btn)
 
             # Delete button (custom agents only)
             if not getattr(ag, "is_builtin", False) and ag.id != "default":
@@ -1978,6 +2151,7 @@ class SayriCajita(Gtk.Box):
         cur_url = cfg.get_string("provider", "base_url") if cfg else "https://api.groq.com/openai/v1"
         cur_key = cfg.get_string("provider", "api_key") if cfg else ""
         cur_model = cfg.get_string("provider", "model") if cfg else "llama-3.3-70b-versatile"
+        cur_strip = cfg.get_string("provider", "strip_patterns") if cfg else "<think>.*?</think>, <thought>.*?</thought>"
         cur_wakeword = cfg.get_string("stt", "wake_word") if cfg else "hey sayri"
         cur_stt_model = cfg.get_string("stt", "model_size") if cfg else "base"
         cur_stt_lang = cfg.get_string("stt", "language") if cfg else "es"
@@ -2007,12 +2181,14 @@ class SayriCajita(Gtk.Box):
         b1, url_entry = _field("Base URL", cur_url)
         b2, key_entry = _field("API Key (Token Shield Protected)", cur_key, is_secret=True)
         b3, model_entry = _field("Model Name", cur_model)
-        b4, wake_entry = _field("Wakeword Trigger", cur_wakeword)
+        b4, strip_entry = _field("Strip / Filter Words or Tags (e.g. <think>.*?</think>)", cur_strip)
+        b5, wake_entry = _field("Wakeword Trigger", cur_wakeword)
 
         self.settings_box.append(b1)
         self.settings_box.append(b2)
         self.settings_box.append(b3)
         self.settings_box.append(b4)
+        self.settings_box.append(b5)
 
         save_btn = Gtk.Button(label="Save LLM Settings")
         save_btn.add_css_class("sayri-action-btn")
@@ -2025,6 +2201,7 @@ class SayriCajita(Gtk.Box):
                 cfg.set("provider", "base_url", url_entry.get_text().strip())
                 cfg.set("provider", "api_key", key_entry.get_text().strip())
                 cfg.set("provider", "model", model_entry.get_text().strip())
+                cfg.set("provider", "strip_patterns", strip_entry.get_text().strip())
                 cfg.set("stt", "wake_word", wake_entry.get_text().strip())
                 save_btn.set_label("✓ Settings Saved!")
                 GLib.timeout_add(1500, lambda: (save_btn.set_label("Save LLM Settings"), False))
@@ -3112,6 +3289,52 @@ class SayriCajita(Gtk.Box):
         sb_drop.connect("notify::selected", _update_sb_banner)
         _update_sb_banner()
 
+        # Autonomous Loop Switch
+        loop_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        loop_row.set_margin_top(4)
+        loop_row.set_margin_bottom(4)
+        loop_v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        loop_v.set_hexpand(True)
+        lbl_loop = Gtk.Label()
+        lbl_loop.set_markup("<b>Autonomous Loop (Web + Host + Retry)</b>")
+        lbl_loop.set_halign(Gtk.Align.START)
+        lbl_loop_sub = Gtk.Label()
+        lbl_loop_sub.set_markup("<span foreground='#94a3b8' size='8500'>Mandates searching internet & inspecting host before execution, and self-heals on errors.</span>")
+        lbl_loop_sub.set_halign(Gtk.Align.START)
+        lbl_loop_sub.set_wrap(True)
+        loop_v.append(lbl_loop)
+        loop_v.append(lbl_loop_sub)
+        loop_row.append(loop_v)
+
+        loop_switch = Gtk.Switch()
+        loop_switch.set_active(True)
+        loop_switch.set_valign(Gtk.Align.CENTER)
+        loop_row.append(loop_switch)
+        box.append(loop_row)
+
+        # Preference Learning Switch
+        pref_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        pref_row.set_margin_top(4)
+        pref_row.set_margin_bottom(4)
+        pref_v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        pref_v.set_hexpand(True)
+        lbl_pref = Gtk.Label()
+        lbl_pref.set_markup("<b>Preference Memory & Reinforcement</b>")
+        lbl_pref.set_halign(Gtk.Align.START)
+        lbl_pref_sub = Gtk.Label()
+        lbl_pref_sub.set_markup("<span foreground='#94a3b8' size='8500'>Learns successful commands and user preference queries on-demand.</span>")
+        lbl_pref_sub.set_halign(Gtk.Align.START)
+        lbl_pref_sub.set_wrap(True)
+        pref_v.append(lbl_pref)
+        pref_v.append(lbl_pref_sub)
+        pref_row.append(pref_v)
+
+        pref_switch = Gtk.Switch()
+        pref_switch.set_active(True)
+        pref_switch.set_valign(Gtk.Align.CENTER)
+        pref_row.append(pref_switch)
+        box.append(pref_row)
+
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.END)
         btn_box.set_margin_top(8)
@@ -3139,9 +3362,172 @@ class SayriCajita(Gtk.Box):
                     system_prompt=p or f"You are {n}, an autonomous assistant for Sayri.",
                     model=AgentModelConfig(model_name="default"),
                     sandbox=SandboxConfig(level=sb_level_enum),
+                    investigation_loop=loop_switch.get_active(),
+                    reinforcement_learning=pref_switch.get_active(),
                 )
                 AgentCreator.save_agent(profile)
                 self._populate_agents()
+            dialog.close()
+
+        save_b.connect("clicked", _save)
+        btn_box.append(save_b)
+
+        box.append(btn_box)
+        dialog.set_child(box)
+        dialog.present()
+
+    def _prompt_edit_agent(self, profile: AgentProfile) -> None:
+        dialog = Gtk.Window(title=f"Agent Settings: {profile.name}")
+        dialog.set_default_size(400, 360)
+        dialog.set_modal(True)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(14)
+        box.set_margin_end(14)
+
+        # Name
+        lbl = Gtk.Label(label="Agent Name:")
+        lbl.set_halign(Gtk.Align.START)
+        box.append(lbl)
+        name_entry = Gtk.Entry()
+        name_entry.add_css_class("sayri-settings-entry")
+        name_entry.set_text(profile.name)
+        box.append(name_entry)
+
+        # Instructions
+        lbl2 = Gtk.Label(label="Instructions / System Prompt:")
+        lbl2.set_halign(Gtk.Align.START)
+        box.append(lbl2)
+        prompt_entry = Gtk.Entry()
+        prompt_entry.add_css_class("sayri-settings-entry")
+        prompt_entry.set_text(profile.system_prompt or profile.custom_instructions or "")
+        box.append(prompt_entry)
+
+        # Sandbox DropDown & Dynamic Security Indicator
+        lbl_sb = Gtk.Label(label="Sandbox Security Policy:")
+        lbl_sb.set_halign(Gtk.Align.START)
+        box.append(lbl_sb)
+
+        sb_options = [
+            ("LEVEL_0_NO_EXEC", "LEVEL_0: Pure Chat (No Execution / Maximum Safety)"),
+            ("LEVEL_1_READONLY", "LEVEL_1: Sandbox L1 (Read-Only FS / Ephemeral Tmp)"),
+            ("LEVEL_2_ISOLATED_DEV", "LEVEL_2: Sandbox L2 (Isolated Workspace)"),
+            ("LEVEL_3_HOST_USER", "LEVEL_3: Host L3 (Active Desktop User)"),
+            ("LEVEL_4_HOST_ROOT", "LEVEL_4: Host L4 (Elevated / Root)"),
+        ]
+        sb_model = Gtk.StringList.new([opt[1] for opt in sb_options])
+        sb_drop = Gtk.DropDown.new(sb_model, None)
+
+        cur_sb_lvl = profile.sandbox.level.value
+        sel_idx = 0
+        for i, (k, _) in enumerate(sb_options):
+            if k == cur_sb_lvl:
+                sel_idx = i
+                break
+        sb_drop.set_selected(sel_idx)
+        box.append(sb_drop)
+
+        # Dynamic Sandbox Feedback Banner
+        sb_banner = Gtk.Label()
+        sb_banner.add_css_class("sayri-info-banner")
+        sb_banner.set_wrap(True)
+        sb_banner.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        box.append(sb_banner)
+
+        def _update_sb_banner(*_):
+            idx = sb_drop.get_selected()
+            lvl = sb_options[idx][0]
+            if lvl == "LEVEL_0_NO_EXEC":
+                sb_banner.set_markup("<span foreground='#22c55e'>🔒 <b>Zero-Execution Sandbox:</b> Pure conversational assistant. All plugin execution and bash commands are strictly blocked.</span>")
+            elif lvl == "LEVEL_1_READONLY":
+                sb_banner.set_markup("<span foreground='#38bdf8'>🛡️ <b>Read-Only Sandbox:</b> File system is read-only. Plugins cannot modify user files or launch host desktop apps.</span>")
+            elif lvl == "LEVEL_2_ISOLATED_DEV":
+                sb_banner.set_markup("<span foreground='#38bdf8'>📦 <b>Isolated Workspace:</b> Agent can only create files inside its designated workspace directory.</span>")
+            else:
+                sb_banner.set_markup("<span foreground='#f59e0b'>⚠️ <b>Host Execution:</b> Direct terminal and desktop app execution on the host user space.</span>")
+
+        sb_drop.connect("notify::selected", _update_sb_banner)
+        _update_sb_banner()
+
+        # Autonomous Loop Switch
+        loop_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        loop_row.set_margin_top(4)
+        loop_row.set_margin_bottom(4)
+        loop_v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        loop_v.set_hexpand(True)
+        lbl_loop = Gtk.Label()
+        lbl_loop.set_markup("<b>Autonomous Loop (Web + Host + Retry)</b>")
+        lbl_loop.set_halign(Gtk.Align.START)
+        lbl_loop_sub = Gtk.Label()
+        lbl_loop_sub.set_markup("<span foreground='#94a3b8' size='8500'>Mandates searching internet & inspecting host before execution, and self-heals on errors.</span>")
+        lbl_loop_sub.set_halign(Gtk.Align.START)
+        lbl_loop_sub.set_wrap(True)
+        loop_v.append(lbl_loop)
+        loop_v.append(lbl_loop_sub)
+        loop_row.append(loop_v)
+
+        loop_switch = Gtk.Switch()
+        loop_switch.set_active(getattr(profile, "investigation_loop", True))
+        loop_switch.set_valign(Gtk.Align.CENTER)
+        loop_row.append(loop_switch)
+        box.append(loop_row)
+
+        # Preference Learning Switch
+        pref_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        pref_row.set_margin_top(4)
+        pref_row.set_margin_bottom(4)
+        pref_v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        pref_v.set_hexpand(True)
+        lbl_pref = Gtk.Label()
+        lbl_pref.set_markup("<b>Preference Memory & Reinforcement</b>")
+        lbl_pref.set_halign(Gtk.Align.START)
+        lbl_pref_sub = Gtk.Label()
+        lbl_pref_sub.set_markup("<span foreground='#94a3b8' size='8500'>Learns successful commands and user preference queries on-demand.</span>")
+        lbl_pref_sub.set_halign(Gtk.Align.START)
+        lbl_pref_sub.set_wrap(True)
+        pref_v.append(lbl_pref)
+        pref_v.append(lbl_pref_sub)
+        pref_row.append(pref_v)
+
+        pref_switch = Gtk.Switch()
+        pref_switch.set_active(getattr(profile, "reinforcement_learning", True))
+        pref_switch.set_valign(Gtk.Align.CENTER)
+        pref_row.append(pref_switch)
+        box.append(pref_row)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        cancel_b = Gtk.Button(label="Cancel")
+        cancel_b.add_css_class("sayri-action-btn")
+        cancel_b.connect("clicked", lambda _: dialog.close())
+        btn_box.append(cancel_b)
+
+        save_b = Gtk.Button(label="Save Changes")
+        save_b.add_css_class("sayri-action-btn")
+        save_b.add_css_class("primary")
+
+        def _save(_):
+            new_name = name_entry.get_text().strip()
+            new_prompt = prompt_entry.get_text().strip()
+            if new_name:
+                profile.name = new_name
+            profile.system_prompt = new_prompt or profile.system_prompt
+            profile.custom_instructions = new_prompt
+
+            sel_sb_idx = sb_drop.get_selected()
+            profile.sandbox.level = getattr(SandboxLevel, sb_options[sel_sb_idx][0], profile.sandbox.level)
+            profile.investigation_loop = loop_switch.get_active()
+            profile.reinforcement_learning = pref_switch.get_active()
+
+            AgentCreator.save_agent(profile)
+            if getattr(self.app, "active_agent", None) and self.app.active_agent.id == profile.id:
+                self.app.active_agent = profile
+                self.update_agent_badge(profile.name, profile.sandbox.level.value)
+            self._populate_agents()
             dialog.close()
 
         save_b.connect("clicked", _save)
@@ -3275,13 +3661,28 @@ class SayriCajita(Gtk.Box):
         self.card_bg.set_mode("speaking")
 
     def set_command_output(self, cmd: str, output: str, exit_code: int = 0) -> None:
-        self.cmd_expander.set_label(f"Command: {cmd[:28]}… (code {exit_code})")
-        self.cmd_label.set_text(f"$ {cmd}\n\n{output}")
+        if not hasattr(self, "_executed_commands"):
+            self._executed_commands = []
+        self._executed_commands.append((cmd, output, exit_code))
+        total = len(self._executed_commands)
+        status_tag = "✓" if exit_code == 0 else f"code {exit_code}"
+        if total == 1:
+            self.cmd_expander.set_label(f"Command ({status_tag}): {cmd[:28]}…")
+        else:
+            self.cmd_expander.set_label(f"Commands ({total} executed • latest: {cmd[:22]}…)")
+
+        formatted_blocks = []
+        for idx, (c, out, code) in enumerate(self._executed_commands, 1):
+            tag = "✓" if code == 0 else f"exit {code}"
+            cleaned_out = out.strip() if out else "(no output)"
+            formatted_blocks.append(f"[{idx}] $ {c} ({tag})\n{cleaned_out}")
+
+        self.cmd_label.set_text("\n" + ("\n\n" + "─" * 38 + "\n\n").join(formatted_blocks))
         self.cmd_expander.set_visible(True)
         self.card_overlay.set_visible(True)
 
-    def set_tool_output(self, cmd: str, output: str) -> None:
-        self.set_command_output(cmd, output, exit_code=0)
+    def set_tool_output(self, cmd: str, output: str, exit_code: int = 0) -> None:
+        self.set_command_output(cmd, output, exit_code=exit_code)
 
     def set_busy(self, busy: bool) -> None:
         if busy:
@@ -3327,6 +3728,7 @@ class SayriCajita(Gtk.Box):
 
     def clear(self) -> None:
         self._live_text = ""
+        self._executed_commands = []
         self.response_label.set_attributes(Pango.AttrList())
         self.response_label.set_text("")
         self.cmd_label.set_text("")

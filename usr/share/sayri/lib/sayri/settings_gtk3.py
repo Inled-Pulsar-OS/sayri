@@ -348,6 +348,7 @@ class SettingsWindowGTK3:
         card_p = self._card(page, "Generation Parameters")
         self._spin_row(card_p, "Temperature", "Sampling temperature (creativity)", "provider", "temperature", 0.0, 2.0, 0.1, 1)
         self._spin_row(card_p, "Max Tokens", "Maximum response token length", "provider", "max_tokens", 0, 16384, 64)
+        self._entry_row(card_p, "Strip / Filter Patterns", "Comma-separated tags or phrases to remove (e.g. <think>.*?</think>)", "provider", "strip_patterns")
         self._switch_row(card_p, "Real-time Streaming", "Stream response tokens immediately", "provider", "stream")
 
         card_t = self._card(page, "Diagnostics")

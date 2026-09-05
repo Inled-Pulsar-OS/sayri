@@ -64,6 +64,36 @@ def _parse_error(status: int, text: str) -> str:
     return f"HTTP {status}: {text[:250]}"
 
 
+def sanitize_messages(messages: list[dict]) -> list[dict]:
+    """Sanitizes messages array to strictly conform to Jinja chat templates:
+    1. Exactly one system message at the beginning (index 0).
+    2. Any subsequent system messages are merged into the initial system prompt.
+    """
+    if not messages:
+        return []
+
+    system_parts = []
+    other_msgs = []
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            if content and str(content).strip():
+                system_parts.append(str(content).strip())
+        else:
+            other_msgs.append({"role": role, "content": content})
+
+    sanitized = []
+    if system_parts:
+        sanitized.append({"role": "system", "content": "\n\n".join(system_parts)})
+
+    sanitized.extend(other_msgs)
+    return sanitized
+
+
 def build_payload(
     model: str,
     messages: list[dict],
@@ -74,7 +104,7 @@ def build_payload(
 ) -> dict:
     payload: dict = {
         "model": (model or "default").strip(),
-        "messages": messages,
+        "messages": sanitize_messages(messages),
         "stream": stream,
     }
     if temperature is not None:

@@ -70,8 +70,11 @@ def markdown_to_plain_speech(text: str) -> str:
     if not text:
         return ""
     import re
+    # Remove thinking tags <think>...</think> and <thought>...</thought>
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<thought>.*?</thought>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
     # Remove code blocks completely so TTS doesn't dictate raw scripts
-    cleaned = re.sub(r"```(?:[a-zA-Z0-9_\-]+)?\n?(.*?)\n?```", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"```(?:[a-zA-Z0-9_\-]+)?\n?(.*?)\n?```", "", cleaned, flags=re.DOTALL)
     # Convert inline code `foo` -> foo
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
     # Convert bold / italic
@@ -309,6 +312,8 @@ class SayriApp(Gtk.Application):
             except OSError:
                 pass
 
+        self._ipc_running = True
+
         def _worker():
             try:
                 import socket
@@ -323,7 +328,7 @@ class SayriApp(Gtk.Application):
                 while getattr(self, "_ipc_running", False):
                     try:
                         conn, _ = self._ipc_sock.accept()
-                        conn.settimeout(40.0)
+                        conn.settimeout(120.0)
 
                         # Enforce peer UID validation on Linux to prevent cross-user socket hijacking
                         try:
@@ -340,26 +345,40 @@ class SayriApp(Gtk.Application):
                         if raw_data.startswith("{"):
                             try:
                                 msg = json.loads(raw_data)
-                                if msg.get("type") in ("INCOMING_MSG", "remote_message"):
+                                if msg.get("type") in ("ATTACH_IMAGE", "attach") or ("image_path" in msg and msg.get("type") != "INCOMING_MSG"):
+                                    img_path = msg.get("image_path") or msg.get("path")
+                                    if img_path:
+                                        GLib.idle_add(lambda p=img_path: self.overlay and (self.overlay.show(), self.overlay.cajita.set_attached_image(p)))
+                                        conn.sendall(b"OK\n")
+                                        conn.close()
+                                        continue
+                                elif msg.get("type") in ("INCOMING_MSG", "remote_message"):
                                     prompt_text = msg.get("text", "")
                                     author = msg.get("author", "User")
                                     target_agent_id = msg.get("target_agent", "default")
                                     sandbox_level = msg.get("sandbox_level")
                                     instance_id = msg.get("instance_id", "default")
                                     custom_session_id = msg.get("session_id")
-                                    reply = self.process_remote_message(
+                                    self.process_remote_message(
                                         text=prompt_text,
                                         author=author,
                                         target_agent_id=target_agent_id,
                                         sandbox_level=sandbox_level,
                                         instance_id=instance_id,
                                         session_id=custom_session_id,
+                                        conn=conn,
                                     )
-                                    conn.sendall(reply.encode("utf-8") + b"\n")
-                                    conn.close()
+                                    try:
+                                        conn.close()
+                                    except Exception:
+                                        pass
                                     continue
                             except Exception as e:
                                 print(f"[Sayri IPC] Message processing error: {e}")
+                        elif raw_data.startswith("attach "):
+                            img_path = raw_data[7:].strip()
+                            if img_path:
+                                GLib.idle_add(lambda p=img_path: self.overlay and (self.overlay.show(), self.overlay.cajita.set_attached_image(p)))
                         elif raw_data == "toggle":
                             GLib.idle_add(self.toggle_visible)
                         elif raw_data == "show":
@@ -374,10 +393,12 @@ class SayriApp(Gtk.Application):
                             GLib.idle_add(self.quit_app)
                         conn.sendall(b"OK\n")
                         conn.close()
-                    except Exception:
-                        break
+                    except Exception as client_exc:
+                        # Log and continue accepting connections without killing the server
+                        print(f"[Sayri IPC] Connection handling warning: {client_exc}")
+                        continue
             except Exception as exc:
-                print(f"[Sayri] IPC server: {exc}")
+                print(f"[Sayri] IPC server fatal error: {exc}")
 
         self._ipc_running = True
         threading.Thread(target=_worker, daemon=True).start()
@@ -390,22 +411,40 @@ class SayriApp(Gtk.Application):
         sandbox_level: Optional[str] = None,
         instance_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        conn: Optional[socket.socket] = None,
     ) -> str:
         """Processes an incoming message from a channel gateway (Telegram/Discord) via AgentEngine."""
         import copy
         done_event = threading.Event()
         result_holder = {"text": "", "error": None}
 
+        def _send_event(event_dict: Dict[str, Any]) -> None:
+            if conn:
+                try:
+                    payload = json.dumps(event_dict) + "\n"
+                    conn.sendall(payload.encode("utf-8"))
+                except Exception:
+                    pass
+
         def _on_delta(d: str):
             result_holder["text"] += d
+            _send_event({"event": "delta", "delta": d})
 
         def _on_done(full: str):
             if full:
                 result_holder["text"] = full
+            _send_event({"event": "done", "text": full or result_holder["text"]})
             done_event.set()
+
+        def _on_tool_start(cmd: str):
+            _send_event({"event": "tool_start", "tool": "bash", "command": cmd})
+
+        def _on_tool_finish(cmd: str, out: str, code: int):
+            _send_event({"event": "tool_finish", "tool": "bash", "command": cmd, "output": out, "exit_code": code})
 
         def _on_error(exc: Exception):
             result_holder["error"] = str(exc)
+            _send_event({"event": "error", "error": str(exc)})
             done_event.set()
 
         # 1. Resolve target agent profile
@@ -439,6 +478,8 @@ class SayriApp(Gtk.Application):
                 session_id=session_id,
             )
 
+        _send_event({"event": "start", "session_id": session_id})
+
         try:
             self.engine.process_query(
                 session_id=session_id,
@@ -447,25 +488,46 @@ class SayriApp(Gtk.Application):
                 cfg=self.cfg,
                 on_delta=_on_delta,
                 on_done=_on_done,
-                on_tool_start=lambda _: None,
-                on_tool_finish=lambda _t, _o, _c: None,
+                on_tool_start=_on_tool_start,
+                on_tool_finish=_on_tool_finish,
                 on_error=_on_error,
             )
-            # Wait up to 35 seconds for the LLM response
-            done_event.wait(timeout=35.0)
+            # Wait up to 120 seconds for multi-step LLM investigation loop
+            done_event.wait(timeout=120.0)
 
             # Sync session changes with active desktop UI
             self._notify_sessions_updated()
 
-            if result_holder["text"]:
-                return result_holder["text"].strip()
-            if result_holder["error"]:
-                return f"⚠️ Sayri Error: {result_holder['error']}"
+            final_reply = result_holder["text"].strip()
+            if not final_reply and result_holder["error"]:
+                final_reply = f"⚠️ Sayri Error: {result_holder['error']}"
+            if not final_reply:
+                final_reply = f"Hi {author}, I received your message: '{text}'."
+
+            # Ensure AI reply is definitively persisted to local session storage
+            try:
+                sess_check = self.storage.get_session(session_id)
+                if not sess_check or not sess_check.messages or sess_check.messages[-1].role != "assistant":
+                    self.storage.add_message(session_id, Message(role="assistant", content=final_reply))
+                    self._notify_sessions_updated()
+            except Exception as st_err:
+                print(f"[Sayri Remote Storage] Notice persisting final reply: {st_err}")
+
+            if not done_event.is_set():
+                _send_event({"event": "done", "text": final_reply})
+
+            return final_reply
+
         except Exception as exc:
             print(f"[Sayri Remote] Engine error: {exc}")
-            return f"⚠️ Error processing message: {exc}"
-
-        return result_holder["text"].strip() or f"Hi {author}, I received your message: '{text}'."
+            err_msg = f"⚠️ Error processing message: {exc}"
+            try:
+                self.storage.add_message(session_id, Message(role="assistant", content=err_msg))
+                self._notify_sessions_updated()
+            except Exception:
+                pass
+            _send_event({"event": "error", "error": str(exc)})
+            return err_msg
 
     def _notify_sessions_updated(self) -> None:
         """Notifies cajita chat history UI in real-time when new remote messages arrive."""
@@ -857,7 +919,7 @@ class SayriApp(Gtk.Application):
             on_done=lambda full: GLib.idle_add(self._finish_engine_reply, full, query_id),
             on_tool_start=lambda cmd: GLib.idle_add(self._msg, "hint", f"⚙️ Running: {cmd[:36]}…"),
             on_tool_finish=lambda cmd, out, code: GLib.idle_add(
-                lambda: self.overlay and self.overlay.cajita.set_tool_output(cmd, out)
+                lambda c=cmd, o=out, rc=code: self.overlay and self.overlay.cajita.set_command_output(c, o, rc)
             ),
             on_error=lambda e: GLib.idle_add(self._on_error, e, query_id),
         )

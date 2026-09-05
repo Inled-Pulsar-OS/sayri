@@ -101,6 +101,8 @@ class AgentProfile:
     allowed_plugins: List[str] = field(default_factory=list)
     allowed_tools: List[str] = field(default_factory=lambda: ["bash", "read_skill", "search_history"])
     custom_instructions: str = ""
+    investigation_loop: bool = True
+    reinforcement_learning: bool = True
     created_at: float = field(default_factory=time.time)
     is_builtin: bool = False
 

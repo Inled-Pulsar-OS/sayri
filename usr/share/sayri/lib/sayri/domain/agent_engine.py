@@ -21,6 +21,29 @@ from sayri.domain.models import (
 )
 
 
+def strip_unwanted_patterns(text: str, patterns_cfg: str) -> str:
+    """Removes configured thinking tags or custom phrases from the LLM text output."""
+    if not text:
+        return ""
+    cleaned = text
+    # Default stripping for <think> and <thought> tags
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = re.sub(r"<thought>.*?</thought>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+
+    if patterns_cfg:
+        raw_patterns = [p.strip() for p in re.split(r"[,\n]", patterns_cfg) if p.strip()]
+        for pat in raw_patterns:
+            if not pat:
+                continue
+            try:
+                cleaned = re.sub(pat, "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+            except Exception:
+                cleaned = cleaned.replace(pat, "")
+
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 class AgentEngine:
     """Orchestrates ReAct agent loop, tool calling, sandboxed execution, and memory persistence."""
 
@@ -54,36 +77,77 @@ class AgentEngine:
                 items = [f"- {s['name']}: {s['description']}" for s in filtered_skills[:15]]
                 skills_summary = "\nAUTHORIZED SKILLS (read details with the 'read_skill' tool):\n" + "\n".join(items)
 
-        sandbox_info = f"Active Isolation Level: {profile.sandbox.level.value}."
+        # Sandbox / Execution context (clear & grounded so small models don't hallucinate sandbox isolation)
         if is_level_0:
-            sandbox_info += " (STRICTLY FORBIDDEN TO EXECUTE BASH/SYSTEM COMMANDS OR HOST PLUGINS; you are in a pure conversational sandbox. Any attempt to execute commands will be intercepted and blocked by the security sandbox)."
+            sandbox_info = "Active Isolation Level: LEVEL_0_NO_EXEC (STRICTLY FORBIDDEN TO EXECUTE BASH/SYSTEM COMMANDS; you are in a pure conversational assistant mode)."
+            execution_policy = "- LEVEL_0_NO_EXEC: Purely conversational mode. No terminal or system access."
         elif profile.sandbox.level in (SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
-            sandbox_info += " (You are in an isolated Bubblewrap container with no Wayland/X11 graphical server. You CANNOT open graphical application windows or modify host files outside your isolated sandbox)."
+            sandbox_info = f"Active Isolation Level: {profile.sandbox.level.value} (Isolated Bubblewrap sandbox container without graphical Wayland/X11 display)."
+            execution_policy = f"- {profile.sandbox.level.value}: Isolated Bubblewrap environment for read or isolated files. No display server access."
+        elif profile.sandbox.level == SandboxLevel.LEVEL_4_HOST_ROOT:
+            sandbox_info = "DIRECT HOST ACCESS (LEVEL_4_HOST_ROOT): Full host execution with administrative/Polkit elevation."
+            execution_policy = "- LEVEL_4_HOST_ROOT: Administrative access with Polkit elevation (pkexec)."
+        else:
+            sandbox_info = "DIRECT HOST ACCESS (LEVEL_3_HOST_USER): You run directly on the host Linux desktop with active user privileges. You have full terminal access to launch desktop applications, inspect system packages and manage files."
+            execution_policy = "- LEVEL_3_HOST_USER: Direct execution on user's host desktop. Full capability to launch graphical apps (e.g. `google-chrome &`, `flatpak run ...`, `gtk-launch ...`) and run commands."
 
         custom_instr = f"\nSPECIFIC AGENT INSTRUCTIONS:\n{profile.custom_instructions}\n" if getattr(profile, "custom_instructions", "") else ""
+
+        loop_protocol = ""
+        if getattr(profile, "investigation_loop", True) and not is_level_0:
+            loop_protocol = (
+                "AUTONOMOUS 2-PHASE LOOP PROTOCOL (SEARCH HOST & WEB FIRST -> THEN LAUNCH):\n"
+                "CRITICAL RULE: Never guess binary names blindly. Follow this exact 2-step pattern for all desktop and system actions:\n\n"
+                "Example 1 (Locating and launching desktop apps):\n"
+                "User: open the music player\n"
+                "Assistant:\n"
+                "```bash\n"
+                "sayri-pref query 'music player' || grep -iE 'Name=.*(Music|Audio|Player)' /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | head -n 6\n"
+                "```\n"
+                "[System Observation]: /usr/share/applications/io.bassi.Amberol.desktop:Name=Amberol\n"
+                "Assistant:\n"
+                "```bash\n"
+                "amberol &\n"
+                "```\n"
+                "[System Observation]: Command completed with exit code 0\n"
+                "Assistant: I have launched Amberol music player for you.\n\n"
+                "Example 2 (Searching the web or finding utilities before acting):\n"
+                "User: what is the command for system diagnostics?\n"
+                "Assistant:\n"
+                "```bash\n"
+                "sayri-web 'linux system diagnostics command' || which btop htop top 2>/dev/null\n"
+                "```\n"
+                "[System Observation]: • Summary: btop and htop are standard Linux system monitors.\n"
+                "Assistant:\n"
+                "```bash\n"
+                "btop\n"
+                "```\n"
+                "[System Observation]: Command completed with exit code 0\n"
+                "Assistant: You can use btop for real-time diagnostics.\n\n"
+                "Example 3 (Self-Healing / Retry on Error):\n"
+                "If any command fails (non-zero exit code or error output), DO NOT STOP. Inspect the error output, search with `sayri-web` or `grep`, and emit the corrected command.\n\n"
+                "ALWAYS start with Step 1 (search with sayri-pref, sayri-web, grep, or which) before launching.\n\n"
+            )
 
         base = (
             f"You are Sayri, the intelligent assistant, agentic orchestrator and operating-system copilot in Pulsar OS.\n"
             f"Active profile: {profile.name} (ID: {profile.id}).\n"
             f"Security: {sandbox_info}\n"
             f"{custom_instr}\n"
-            "SANDBOX AND EXECUTION POLICY:\n"
-            "- LEVEL_0_NO_EXEC: Purely conversational mode. Blocked from executing commands or touching the host.\n"
-            "- LEVEL_1_READONLY / LEVEL_2_ISOLATED_DEV: Isolated Bubblewrap environment for read, inspection or isolated development operations. It has no access to the display server (Wayland/X11); therefore, it CANNOT open graphical applications (such as calculator, editors or browsers) on the user's screen.\n"
-            "- LEVEL_3_HOST_USER: Full access to the local user's host. It can interact with the system and launch graphical applications (e.g. `gnome-calculator &` or `gtk-launch org.gnome.Calculator`).\n"
-            "- LEVEL_4_HOST_ROOT: Administrative access with Polkit elevation (pkexec).\n\n"
+            f"SANDBOX AND EXECUTION POLICY:\n{execution_policy}\n\n"
             "YOUR CAPABILITIES IN PULSAR OS:\n"
-            "1. System Orchestration: You can read files, open applications and run tools within your sandbox limits.\n"
+            "1. System Orchestration: You can read files, open applications and run tools within your security limits.\n"
             "2. Sub-Agent Creation and Management: You can create sub-agents configured with different models and sandbox levels.\n"
             "3. Skills and Plugins: You can search for and install extensions from the Pulsar Store (https://store-os.inled.es).\n"
             "4. Memory & Conversation History: You maintain context with recent messages. If you need details from earlier in the conversation, you can emit ```search_history <keyword>``` to query past messages.\n"
-            f"{skills_summary}\n\n"
+            + ("5. Learned Preferences: You can query your learned experience and past user preferences anytime in bash with ```sayri-pref query \"<keyword>\"```.\n" if getattr(profile, "reinforcement_learning", True) else "")
+            + f"{skills_summary}\n\n"
+            f"{loop_protocol}"
             "CRITICAL EXECUTION AND TRUTHFULNESS RULES:\n"
-            "1. If you need to perform an authorized action on the system, emit a block:\n"
+            "1. If you need to perform an action or investigation on the system, emit a block:\n"
             "```bash\n<command>\n```\n"
-            "2. ABSOLUTE TRUTHFULNESS: NEVER claim an application has opened or an action has completed unless the system observation confirms exit code 0 with no sandbox errors.\n"
-            "3. If a command fails due to sandbox (non-zero exit code or display/permission error), explain to the user with total honesty and clarity the sandbox restriction that prevented the action and how to fix it.\n"
-            "4. Always respond in the language the user spoke to you in, naturally, concisely and pleasantly (1 to 3 spoken sentences for voice)."
+            "2. ABSOLUTE TRUTHFULNESS: NEVER claim an application has opened or an action has completed unless the system observation confirms exit code 0 with no errors.\n"
+            "3. Always respond in the language the user spoke to you in, naturally, concisely and pleasantly (1 to 3 spoken sentences for voice)."
         )
         return base
 
@@ -165,9 +229,9 @@ class AgentEngine:
             self._generate_session_title_async(session.id, user_text, cfg)
 
         # Prepare messages payload with token-efficient context window
-        messages = [{"role": "system", "content": self.build_system_prompt(profile)}]
-
+        system_prompt = self.build_system_prompt(profile)
         all_past_msgs = session.messages
+        
         if len(all_past_msgs) > 4:
             # Compact older context summary to save tokens while keeping conversation state
             older_msgs = all_past_msgs[:-4]
@@ -178,19 +242,20 @@ class AgentEngine:
                     role_tag = "User" if om.role == "user" else "Sayri"
                     topics_summary.append(f"{role_tag}: {snippet}")
             if topics_summary:
-                compact_note = (
-                    "[Previous context summary in this session:\n"
+                system_prompt += (
+                    "\n\n[Previous context summary in this session:\n"
                     + "\n".join(topics_summary)
                     + "\n(Use ```search_history <keyword>``` if you need older verbatim details)]"
                 )
-                messages.append({"role": "system", "content": compact_note})
 
-            # Append the most recent 4 messages for immediate conversational continuity
-            for m in all_past_msgs[-4:]:
-                messages.append({"role": m.role, "content": m.content})
-        else:
-            for m in all_past_msgs:
-                messages.append({"role": m.role, "content": m.content})
+        messages = [{"role": "system", "content": system_prompt}]
+
+        recent_msgs = all_past_msgs[-4:] if len(all_past_msgs) > 4 else all_past_msgs
+        for m in recent_msgs:
+            if m.role == "system":
+                continue
+            role = "assistant" if m.role == "assistant" else "user"
+            messages.append({"role": role, "content": m.content})
 
         messages.append({"role": "user", "content": user_text})
 
@@ -271,7 +336,8 @@ class AgentEngine:
         on_tool_finish: Callable[[str, str, int], None],
         on_error: Callable[[Exception], None],
     ) -> None:
-        if not self._active_queries.get(query_id, False) or depth > 6:
+        max_depth = 10 if getattr(profile, "investigation_loop", True) else 6
+        if not self._active_queries.get(query_id, False) or depth > max_depth:
             return
 
         base_url = profile.model.base_url or cfg.get_string("provider", "base_url")
@@ -294,6 +360,11 @@ class AgentEngine:
         def _handle_error(exc: Exception) -> None:
             if not self._active_queries.get(query_id, False):
                 return
+            err_msg = f"⚠️ Sayri Error: {exc}"
+            try:
+                self.storage.add_message(session_id, Message(role="assistant", content=err_msg))
+            except Exception:
+                pass
             on_error(exc)
 
         def _handle_done(full_text: str) -> None:
@@ -305,7 +376,7 @@ class AgentEngine:
             if not m_hist:
                 m_hist = re.search(r"<(?:search_history|recall_history)>(.*?)</(?:search_history|recall_history)>", full_text, re.DOTALL)
 
-            if m_hist and depth < 6:
+            if m_hist and depth < max_depth:
                 query_term = m_hist.group(1).strip()
                 on_tool_start(f"search_history: {query_term}")
                 past_matches = self.storage.search_session_messages(session_id, query=query_term, limit=6)
@@ -344,7 +415,7 @@ class AgentEngine:
             if not m:
                 m = re.search(r"<(?:bash|sh|tool)>(.*?)</(?:bash|sh|tool)>", full_text, re.DOTALL)
 
-            if m and depth < 6:
+            if m and depth < max_depth:
                 cmd = m.group(1).strip()
                 if cmd:
                     on_tool_start(cmd)
@@ -387,18 +458,49 @@ class AgentEngine:
                     next_messages.append({"role": "assistant", "content": full_text})
 
                     if retcode != 0:
-                        observation = (
-                            f"⚠️ [EXECUTION ERROR (Exit Code {retcode})]:\n{sanitized_output}\n\n"
-                            "CRITICAL RULE: The previous command did NOT run or failed due to security/sandbox restrictions or a system error. "
-                            "You must explicitly inform the user that the action could NOT be performed, "
-                            "explaining the exact sandbox or environment cause and which sandbox level would be required (e.g. LEVEL_3_HOST_USER for graphical apps). "
-                            "NEVER say the application opened or that the command worked."
-                        )
+                        if getattr(profile, "investigation_loop", True):
+                            observation = (
+                                f"⚠️ [EXECUTION FAILED (Exit Code {retcode})]:\n{sanitized_output}\n\n"
+                                "AUTONOMOUS SELF-HEALING LOOP ACTIVE: The previous command failed or did not finish as expected. "
+                                "DO NOT STOP OR GIVE UP. Collect information about the error, investigate the host system or search for solutions "
+                                "(e.g. check binary paths with `which`, `find /usr/share/applications`, `flatpak list`, `pacman -Qs`), "
+                                "correct your approach, and emit the next bash block ```bash\n<command>\n``` to continue toward completing the goal."
+                            )
+                        else:
+                            observation = (
+                                f"⚠️ [EXECUTION ERROR (Exit Code {retcode})]:\n{sanitized_output}\n\n"
+                                "CRITICAL RULE: The previous command did NOT run or failed. "
+                                "Explain to the user clearly what error occurred and how to resolve it."
+                            )
                     else:
-                        observation = (
-                            f"[Execution Result (Exit Code 0)]:\n{sanitized_output}\n\n"
-                            "The command ran successfully. Respond to the user concisely and naturally, reporting the result."
-                        )
+                        is_investigation_cmd = any(cmd.strip().startswith(prefix) for prefix in ("sayri-pref", "sayri-web", "grep", "which", "find", "cat", "echo", "pwd", "ls", "search_history", "head", "tail", "pacman -Q", "flatpak list"))
+                        if is_investigation_cmd and getattr(profile, "investigation_loop", True):
+                            observation = (
+                                f"[Investigation Output (Exit Code 0)]:\n{sanitized_output}\n\n"
+                                "Phase 1 search is complete. Now proceed to Phase 2: emit the bash block with the discovered application binary in background (e.g. ```bash\n<binary> &\n```) to execute the action for the user."
+                            )
+                        else:
+                            observation = (
+                                f"[Execution Result (Exit Code 0)]:\n{sanitized_output}\n\n"
+                                "The command/application was executed successfully. Respond to the user concisely and pleasantly, reporting the result."
+                            )
+                    # Auto-record learned preferences for substantive commands
+                    if getattr(profile, "reinforcement_learning", True) and not cmd.startswith(("sayri-pref", "grep", "which", "find", "cat", "echo", "pwd", "ls", "search_history")):
+                        try:
+                            user_intent = ""
+                            for m_item in messages:
+                                if m_item.get("role") == "user" and not m_item.get("content", "").startswith(("[", "⚠️")):
+                                    user_intent = m_item.get("content", "").strip()
+                                    break
+                            if user_intent:
+                                self.storage.record_preference(
+                                    agent_id=profile.id,
+                                    intent=user_intent[:120],
+                                    command=cmd,
+                                    success=(retcode == 0),
+                                )
+                        except Exception:
+                            pass
 
                     next_messages.append({"role": "user", "content": observation})
 
@@ -417,10 +519,12 @@ class AgentEngine:
                     )
                     return
 
-            # Final response
-            final_msg = Message(role="assistant", content=full_text)
+            # Final response (filter thinking tags / custom strip patterns)
+            patterns_cfg = cfg.get_string("provider", "strip_patterns") if cfg else ""
+            clean_reply = strip_unwanted_patterns(full_text, patterns_cfg)
+            final_msg = Message(role="assistant", content=clean_reply)
             self.storage.add_message(session_id, final_msg)
-            on_done(full_text)
+            on_done(clean_reply)
 
         llm.stream_chat(
             base_url,

@@ -27,16 +27,17 @@ class AgentCreator:
         results: List[AgentProfile] = []
 
         # Add built-in default agent
-        results.append(
-            AgentProfile(
-                id="default",
-                name="Main Sayri",
-                description="Main operating system assistant for Pulsar OS",
-                system_prompt="You are Sayri, the intelligent assistant integrated into Pulsar OS.",
-                sandbox=SandboxConfig(level=SandboxLevel.LEVEL_3_HOST_USER),
-                is_builtin=True,
-            )
+        default_agent = AgentProfile(
+            id="default",
+            name="Main Sayri",
+            description="Main operating system assistant for Pulsar OS",
+            system_prompt="You are Sayri, the intelligent assistant integrated into Pulsar OS.",
+            sandbox=SandboxConfig(level=SandboxLevel.LEVEL_3_HOST_USER),
+            investigation_loop=True,
+            is_builtin=True,
         )
+
+        loaded_profiles: Dict[str, AgentProfile] = {}
 
         for filename in sorted(os.listdir(agents_dir)):
             if not filename.endswith(".json"):
@@ -47,10 +48,12 @@ class AgentCreator:
                     data = json.load(f)
                 sandbox_lvl_str = data.get("sandbox", {}).get("level", "LEVEL_3_HOST_USER")
                 sandbox_lvl = getattr(SandboxLevel, sandbox_lvl_str, SandboxLevel.LEVEL_3_HOST_USER)
+                a_id = data.get("id", filename[:-5])
+                is_def = (a_id == "default")
 
                 profile = AgentProfile(
-                    id=data.get("id", filename[:-5]),
-                    name=data.get("name", filename[:-5]),
+                    id=a_id,
+                    name=data.get("name", "Main Sayri" if is_def else filename[:-5]),
                     description=data.get("description", ""),
                     system_prompt=data.get("system_prompt", ""),
                     model=AgentModelConfig(
@@ -68,12 +71,23 @@ class AgentCreator:
                     allowed_plugins=data.get("allowed_plugins", []),
                     allowed_tools=data.get("allowed_tools", ["bash", "read_skill", "search_history"]),
                     custom_instructions=data.get("custom_instructions", ""),
+                    investigation_loop=bool(data.get("investigation_loop", True)),
+                    reinforcement_learning=bool(data.get("reinforcement_learning", True)),
                     created_at=data.get("created_at", time.time()),
-                    is_builtin=False,
+                    is_builtin=is_def,
                 )
-                results.append(profile)
+                loaded_profiles[a_id] = profile
             except Exception as exc:
                 print(f"[AgentCreator] Error loading agent {filename}: {exc}")
+
+        # Ensure default agent exists (customized if loaded, else fallback default)
+        if "default" in loaded_profiles:
+            results.append(loaded_profiles.pop("default"))
+        else:
+            results.append(default_agent)
+
+        for p in loaded_profiles.values():
+            results.append(p)
 
         return results
 
@@ -117,6 +131,8 @@ class AgentCreator:
             "allowed_skills": profile.allowed_skills,
             "allowed_plugins": getattr(profile, "allowed_plugins", []),
             "allowed_tools": profile.allowed_tools,
+            "investigation_loop": getattr(profile, "investigation_loop", True),
+            "reinforcement_learning": getattr(profile, "reinforcement_learning", True),
             "created_at": profile.created_at,
         }
 
@@ -218,6 +234,8 @@ class AgentCreator:
                 timeout_seconds=12,
             ),
             allowed_tools=[] if sandbox_level == SandboxLevel.LEVEL_0_NO_EXEC else ["bash"],
+            investigation_loop=True,
+            reinforcement_learning=True,
         )
 
         saved_path = cls.save_agent(profile)

@@ -20,6 +20,7 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "max_tokens": 512,
         "stream": True,
         "timeout": 120,
+        "strip_patterns": "<think>.*?</think>, <thought>.*?</thought>",
     },
     "stt": {
         "mode": "wakeword",  # always | wakeword | manual
@@ -57,6 +58,7 @@ _TYPES: dict[str, dict[str, str]] = {
         "max_tokens": "int",
         "stream": "bool",
         "timeout": "int",
+        "strip_patterns": "string",
     },
     "stt": {
         "mode": "string",
