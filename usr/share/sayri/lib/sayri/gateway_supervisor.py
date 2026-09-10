@@ -35,11 +35,15 @@ class GatewaySupervisor:
 
     @staticmethod
     def _get_search_dirs() -> List[Path]:
-        return [
-            Path.home() / ".config" / "sayri" / "skills",
+        dirs = [
             Path.home() / ".config" / "sayri" / "plugins",
             Path("/usr/share/sayri/plugins"),
         ]
+        # Dev checkout: PKG/sayri/.../gateway_supervisor.py -> <repo>/../packages/plugins
+        dev_pkg = Path(__file__).resolve().parent.parent.parent.parent.parent.parent.parent.parent / "packages" / "plugins"
+        if dev_pkg.is_dir():
+            dirs.append(dev_pkg)
+        return dirs
 
     def list_installed_plugins(self) -> List[Dict[str, Any]]:
         """Scans filesystem for installed Gateway plugins and their manifests."""

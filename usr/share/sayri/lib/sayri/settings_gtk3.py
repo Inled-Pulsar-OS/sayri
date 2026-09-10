@@ -661,6 +661,34 @@ class SettingsWindowGTK3:
         self._spin_row(card, "Orb Diameter", "Siri orb size in pixels", "ui", "orb_size", 100, 260, 10)
         self._switch_row(card, "Launch at Login", "Start Sayri automatically when logging in", "ui", "autostart")
 
+        mode = Gtk.ComboBoxText()
+        mode.append("ui", "Orb + daemon")
+        mode.append("daemon", "Solo el daemon (sin UI en pantalla)")
+        mode.set_active_id(self.cfg.get_string("ui", "autostart_mode") or "ui")
+        mode.connect("changed", lambda w: self.cfg.set(
+            "ui", "autostart_mode", w.get_active_id() or "ui"))
+        self._row(card, "Modo de autostart", "Al iniciar sesión: arrancar la UI y también el daemon, o solo el daemon", mode)
+
+        ui = Gtk.ComboBoxText()
+        ui.append("orb", "Orb (integrado)")
+        import json as _json
+        import os
+        from pathlib import Path
+        for root in (Path.home() / ".config" / "sayri" / "plugins",
+                     Path("/usr/share/sayri/plugins")):
+            if not root.is_dir():
+                continue
+            for manifest in sorted(root.glob("*/manifest.json")):
+                try:
+                    data = _json.loads(manifest.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(data.get("ui"), dict) and data.get("id"):
+                    ui.append(data["id"], f"{data.get('name', data['id'])} (plugin)")
+        ui.set_active_id(self.cfg.get_string("ui", "default_ui") or "orb")
+        ui.connect("changed", lambda w: self.cfg.set("ui", "default_ui", w.get_active_id() or "orb"))
+        self._row(card, "Interfaz predeterminada", "UI que abren el botón del .desktop y el autostart", ui)
+
 
 def main() -> None:
     app = SettingsWindowGTK3()

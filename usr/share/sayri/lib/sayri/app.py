@@ -34,6 +34,7 @@ from . import (  # noqa: E402
     settings_window,
     sound,
     stt as stt_mod,
+    texts,
     tts as tts_mod,
 )
 from sayri.domain.models import AgentProfile, SandboxLevel
@@ -47,72 +48,7 @@ APP_ID = "es.inled.sayri"
 HISTORY_MAX = 10
 AUTOSTART_SRC = "/etc/xdg/autostart/sayri.desktop"
 
-
-def _detect_distro() -> str:
-    if os.path.exists("/etc/arch-release"):
-        return "Arch Linux"
-    elif os.path.exists("/etc/debian_version"):
-        return "Debian"
-    try:
-        with open("/etc/os-release") as f:
-            content = f.read().lower()
-            if "arch" in content:
-                return "Arch Linux"
-            elif "debian" in content or "ubuntu" in content:
-                return "Debian"
-    except Exception:
-        pass
-    return "Linux"
-
-
-def markdown_to_plain_speech(text: str) -> str:
-    """Clean markdown syntax into natural, clean spoken text for Piper TTS."""
-    if not text:
-        return ""
-    import re
-    # Remove thinking tags <think>...</think> and <thought>...</thought>
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r"<thought>.*?</thought>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
-    # Remove code blocks completely so TTS doesn't dictate raw scripts
-    cleaned = re.sub(r"```(?:[a-zA-Z0-9_\-]+)?\n?(.*?)\n?```", "", cleaned, flags=re.DOTALL)
-    # Convert inline code `foo` -> foo
-    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
-    # Convert bold / italic
-    cleaned = re.sub(r"\*\*([^\*]+)\*\*", r"\1", cleaned)
-    cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
-    cleaned = re.sub(r"(?<!\*)\*(?!\*)([^\*\n]+?)(?<!\*)\*(?!\*)", r"\1", cleaned)
-    cleaned = re.sub(r"(?<!\w)_([^\_\n]+?)_(?!\w)", r"\1", cleaned)
-    # Convert headers # Header -> Header
-    cleaned = re.sub(r"^(?:#{1,6})\s+(.+)$", r"\1", cleaned, flags=re.MULTILINE)
-    # Convert list bullets - / *
-    cleaned = re.sub(r"^[\*\-]\s+", "", cleaned, flags=re.MULTILINE)
-    # Links [text](url) -> text
-    cleaned = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", cleaned)
-    # Strip URLs
-    cleaned = re.sub(r"https?://\S+", "", cleaned)
-    # Remove leftover markdown symbols
-    cleaned = re.sub(r"[\*\_~`#><]", "", cleaned)
-    # Strip emojis and pictographs so TTS speaks pure words without reciting emoji names
-    emoji_pattern = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport & map symbols
-        "\U0001F1E0-\U0001F1FF"  # flags
-        "\U0001F900-\U0001F9FF"  # supplemental symbols & pictographs
-        "\U0001FA00-\U0001FAFF"  # chess, symbols extended
-        "\U00002700-\U000027BF"  # dingbats
-        "\U00002600-\U000026FF"  # misc symbols
-        "\U00002B50"              # star
-        "\U0000200D"              # zero-width joiner
-        "\U0000FE0F"              # variation selector-16
-        "]+",
-        flags=re.UNICODE,
-    )
-    cleaned = emoji_pattern.sub("", cleaned)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r"\n{2,}", "\n", cleaned).strip()
-    return cleaned
+markdown_to_plain_speech = texts.markdown_to_plain_speech
 
 
 def _get_effective_system_prompt(cfg) -> str:
@@ -120,7 +56,7 @@ def _get_effective_system_prompt(cfg) -> str:
     base_prompt = cfg.get_string("provider", "system_prompt")
     if not agent_mode:
         return base_prompt
-    distro = _detect_distro()
+    distro = texts.detect_os()
     import getpass
     username = getpass.getuser()
     mem_file = paths.memory_file()
@@ -379,6 +315,10 @@ class SayriApp(Gtk.Application):
                             img_path = raw_data[7:].strip()
                             if img_path:
                                 GLib.idle_add(lambda p=img_path: self.overlay and (self.overlay.show(), self.overlay.cajita.set_attached_image(p)))
+                        elif raw_data == "sayri-gui-ping":
+                            conn.sendall(b"GUI\n")
+                            conn.close()
+                            continue
                         elif raw_data == "toggle":
                             GLib.idle_add(self.toggle_visible)
                         elif raw_data == "show":
@@ -1126,32 +1066,15 @@ class SayriApp(Gtk.Application):
             self.overlay.apply_config()
 
     def apply_autostart(self) -> None:
-        autostart_dir = os.path.expanduser("~/.config/autostart")
-        dest = os.path.join(autostart_dir, "sayri.desktop")
-        if self.cfg.get_bool("ui", "autostart"):
-            try:
-                os.makedirs(autostart_dir, exist_ok=True)
-                content = (
-                    "[Desktop Entry]\n"
-                    "Type=Application\n"
-                    "Name=Sayri\n"
-                    "Comment=Sayri voice assistant orb\n"
-                    "Exec=/usr/bin/sayri --autostart\n"
-                    "Terminal=false\n"
-                    "X-GNOME-Autostart-enabled=true\n"
-                )
-                with open(dest, "w", encoding="utf-8") as f:
-                    f.write(content)
+        from .autostart import apply_autostart
+        try:
+            dest = apply_autostart(self.cfg)
+            if dest:
                 print(f"[sayri] Ensured autostart desktop file at {dest}")
-            except OSError as exc:
-                print(f"[sayri] autostart error: {exc}")
-        else:
-            try:
-                if os.path.exists(dest):
-                    os.remove(dest)
-                    print(f"[sayri] Removed autostart desktop file from {dest}")
-            except OSError:
-                pass
+            else:
+                print(f"[sayri] Removed autostart desktop file from {os.path.expanduser('~/.config/autostart/sayri.desktop')}")
+        except OSError as exc:
+            print(f"[sayri] autostart error: {exc}")
 
     def _on_config_change(self, group: str, key: str, _value) -> None:
         if group == "ui":
@@ -1205,33 +1128,69 @@ def main() -> int:
 
     sock_path = os.path.join(paths.state_dir(), "sayri.sock")
     if os.path.exists(sock_path):
+        import socket
+
+        is_gui = False
         try:
-            import socket
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(0.5)
+            s.settimeout(1.0)
             s.connect(sock_path)
-            if is_show:
-                cmd = b"show\n"
-            elif is_hide:
-                cmd = b"hide\n"
-            elif is_settings:
-                cmd = b"settings\n"
-            elif is_quit:
-                cmd = b"quit\n"
-            elif is_autostart:
-                # Already running instance, autostart finishes silently
-                s.close()
-                return 0
-            else:
-                cmd = b"toggle\n"
-            s.sendall(cmd)
-            s.recv(1024)
+            s.sendall(b"sayri-gui-ping\n")
+            try:
+                reply = s.recv(64).strip().upper()
+            except socket.timeout:
+                reply = b""
             s.close()
-            print(f"[Sayri] Forwarded command {cmd.decode().strip()} to running instance via IPC.")
-            return 0
-        except Exception:
+            is_gui = reply.startswith(b"GUI")
+        except OSError:
             try:
                 os.remove(sock_path)
+            except OSError:
+                pass
+        if is_gui:
+            if is_autostart:
+                # UI instance already running, autostart finishes silently
+                return 0
+            if is_show:
+                cmd = b"show"
+            elif is_hide:
+                cmd = b"hide"
+            elif is_settings:
+                cmd = b"settings"
+            elif is_quit:
+                cmd = b"quit"
+            else:
+                cmd = b"toggle"
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(sock_path)
+            s.sendall(cmd + b"\n")
+            s.recv(1024)
+            s.close()
+            print(f"[Sayri] Forwarded command {cmd.decode()} to running UI instance via IPC.")
+            return 0
+        # sayri.sock is held by the headless daemon: route UI-only control
+        # commands to it, and let plain launches open the UI.
+        if is_show:
+            cmd = b"show"
+        elif is_hide:
+            cmd = b"hide"
+        elif is_settings:
+            cmd = b"settings"
+        elif is_quit:
+            cmd = b"quit"
+        else:
+            cmd = None
+        if cmd is not None:
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(1.0)
+                s.connect(sock_path)
+                s.sendall(cmd + b"\n")
+                s.recv(1024)
+                s.close()
+                print(f"[Sayri] Forwarded command {cmd.decode()} to headless daemon via IPC.")
+                return 0
             except OSError:
                 pass
 
@@ -1241,7 +1200,7 @@ def main() -> int:
     # Filter out custom CLI arguments so Gtk.Application argument parser does not fail with "No such option"
     filtered_argv = [sys.argv[0]]
     for a in sys.argv[1:]:
-        if a not in ("--autostart", "--toggle", "-t", "--show", "--hide", "--settings", "-s", "--quit", "-q"):
+        if a not in ("--autostart", "--launch-ui", "--toggle", "-t", "--show", "--hide", "--settings", "-s", "--quit", "-q"):
             filtered_argv.append(a)
 
     app = SayriApp(is_autostart=is_autostart)

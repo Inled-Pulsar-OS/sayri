@@ -44,6 +44,8 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "autostart": True,
         "always_on_top": True,
         "bubble_visible": True,
+        "default_ui": "orb",  # UI the launcher opens: built-in "orb" or a plugin id
+        "autostart_mode": "ui",  # "ui" = UI + daemon at login | "daemon" = daemon only
     },
 }
 
@@ -82,6 +84,8 @@ _TYPES: dict[str, dict[str, str]] = {
         "autostart": "bool",
         "always_on_top": "bool",
         "bubble_visible": "bool",
+        "default_ui": "string",
+        "autostart_mode": "string",
     },
 }
 
