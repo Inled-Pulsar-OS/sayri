@@ -1,10 +1,135 @@
-"""Sayri configuration (GLib key file stored at ~/.config/sayri/sayri.conf)."""
+"""Sayri configuration (key file stored at ~/.config/sayri/sayri.conf).
+
+Uses GLib.KeyFile when PyGObject is available (Linux desktop), otherwise falls
+back to a dependency-free stdlib backend implementing the same read/write
+syntax (``[group]`` + ``key=value``, booleans as ``true``/``false``), so the
+headless core imports cleanly on macOS and Windows.
+"""
 
 from __future__ import annotations
 
-from gi.repository import GLib
+import configparser
+import os
 
 from . import paths
+
+try:
+    from gi.repository import GLib
+    _GLIB_AVAILABLE = True
+except Exception:  # noqa: BLE001 - PyGObject absent (macOS/Windows headless)
+    _GLIB_AVAILABLE = False
+
+# Escape hatch so the portable backend can be exercised/shadowed on systems
+# where GLib is installed (e.g. packagers or CI validating the macOS/Windows path).
+if os.environ.get("SAYRI_NO_GLIB", "").strip().lower() in ("1", "true", "yes", "on"):
+    _GLIB_AVAILABLE = False
+
+
+class _MissingKeyError(Exception):
+    """Raised by a key file backend when a key is absent from the file."""
+
+
+class _GLibKeyFile:
+    """Thin wrapper around GLib.KeyFile that re-raises missing keys uniformly."""
+
+    def __init__(self) -> None:
+        self._kf = GLib.KeyFile.new()
+
+    def load(self, path: str) -> None:
+        self._kf.load_from_file(path, GLib.KeyFileFlags.NONE)
+
+    def save(self, path: str) -> bool:
+        return self._kf.save_to_file(path)
+
+    def set_string(self, group: str, key: str, value: str) -> None:
+        self._kf.set_string(group, key, str(value))
+
+    def set_integer(self, group: str, key: str, value: int) -> None:
+        self._kf.set_integer(group, key, int(value))
+
+    def set_double(self, group: str, key: str, value: float) -> None:
+        self._kf.set_double(group, key, float(value))
+
+    def set_boolean(self, group: str, key: str, value: bool) -> None:
+        self._kf.set_boolean(group, key, bool(value))
+
+    def _get(self, group: str, key: str, getter: str):
+        try:
+            return getattr(self._kf, getter)(group, key)
+        except GLib.Error as exc:
+            raise _MissingKeyError(f"{group}.{key}") from exc
+
+    def get_string(self, group: str, key: str) -> str:
+        return self._get(group, key, "get_string")
+
+    def get_integer(self, group: str, key: str) -> int:
+        return self._get(group, key, "get_integer")
+
+    def get_double(self, group: str, key: str) -> float:
+        return self._get(group, key, "get_double")
+
+    def get_boolean(self, group: str, key: str) -> bool:
+        return self._get(group, key, "get_boolean")
+
+
+class _PortableKeyFile:
+    """GLib.KeyFile-compatible backend built on configparser (no C deps)."""
+
+    def __init__(self) -> None:
+        self._cp = configparser.ConfigParser(
+            interpolation=None,
+            delimiters=("=",),
+            comment_prefixes=("#",),
+            inline_comment_prefixes=None,
+            strict=False,
+            empty_lines_in_values=False,
+        )
+
+    def load(self, path: str) -> None:
+        self._cp.read(path, encoding="utf-8")
+
+    def save(self, path: str) -> bool:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            self._cp.write(f)
+        return True
+
+    def _ensure_section(self, group: str) -> None:
+        if not self._cp.has_section(group):
+            self._cp.add_section(group)
+
+    def set_string(self, group: str, key: str, value: str) -> None:
+        self._ensure_section(group)
+        self._cp[group][key] = str(value)
+
+    def set_integer(self, group: str, key: str, value: int) -> None:
+        self.set_string(group, key, str(int(value)))
+
+    def set_double(self, group: str, key: str, value: float) -> None:
+        self.set_string(group, key, repr(float(value)))
+
+    def set_boolean(self, group: str, key: str, value: bool) -> None:
+        self.set_string(group, key, "true" if bool(value) else "false")
+
+    def _get(self, group: str, key: str, cast):
+        if not self._cp.has_option(group, key):
+            raise _MissingKeyError(f"{group}.{key}")
+        return cast(self._cp.get(group, key))
+
+    def get_string(self, group: str, key: str) -> str:
+        return self._get(group, key, str)
+
+    def get_integer(self, group: str, key: str) -> int:
+        return self._get(group, key, int)
+
+    def get_double(self, group: str, key: str) -> float:
+        return self._get(group, key, float)
+
+    def get_boolean(self, group: str, key: str) -> bool:
+        return self._get(group, key, lambda s: s.strip().lower() == "true")
+
 
 DEFAULTS: dict[str, dict[str, object]] = {
     "provider": {
@@ -20,7 +145,7 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "max_tokens": 512,
         "stream": True,
         "timeout": 120,
-        "strip_patterns": "<think>.*?</think>, <thought>.*?</thought>",
+        "strip_patterns": " thinking.*? response, <thought>.*?</thought>",
     },
     "stt": {
         "mode": "wakeword",  # always | wakeword | manual
@@ -44,8 +169,9 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "autostart": True,
         "always_on_top": True,
         "bubble_visible": True,
-        "default_ui": "orb",  # UI the launcher opens: built-in "orb" or a plugin id
+        "default_ui": "desktop",  # UI the launcher opens: "desktop", "orb" or a plugin id
         "autostart_mode": "ui",  # "ui" = UI + daemon at login | "daemon" = daemon only
+        "setup_complete": False,  # set by the welcome wizard on first run
     },
 }
 
@@ -86,15 +212,16 @@ _TYPES: dict[str, dict[str, str]] = {
         "bubble_visible": "bool",
         "default_ui": "string",
         "autostart_mode": "string",
+        "setup_complete": "bool",
     },
 }
 
 
 class Config:
-    """Typed accessors over a GLib.KeyFile with per-group defaults."""
+    """Typed accessors over a key file with per-group defaults."""
 
     def __init__(self) -> None:
-        self._kf = GLib.KeyFile.new()
+        self._kf: object = (_GLibKeyFile if _GLIB_AVAILABLE else _PortableKeyFile)()
         self._listeners: list[callable] = []
 
         # Apply defaults so getters never fail, then load real values on top.
@@ -109,13 +236,13 @@ class Config:
         cfg_path = paths.config_file()
         self._is_first_run = not os.path.exists(cfg_path)
         try:
-            self._kf.load_from_file(cfg_path, GLib.KeyFileFlags.NONE)
-        except GLib.Error:
-            pass  # first run: defaults only
+            self._kf.load(cfg_path)
+        except Exception:
+            pass  # first run: defaults only (missing file is tolerated)
 
     def save(self) -> None:
         paths.ensure_dirs()
-        ok = self._kf.save_to_file(paths.config_file())
+        ok = self._kf.save(paths.config_file())
         if not ok:
             print(f"[sayri] warning: could not save config to {paths.config_file()}")
 
@@ -142,7 +269,7 @@ class Config:
                 return self._kf.get_double(group, key)
             if kind == "bool":
                 return self._kf.get_boolean(group, key)
-        except GLib.Error:
+        except _MissingKeyError:
             # Missing key after a config edit: fall back to default.
             return DEFAULTS[group][key]
         return DEFAULTS[group][key]

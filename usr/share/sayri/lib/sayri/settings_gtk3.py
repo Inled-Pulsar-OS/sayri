@@ -221,6 +221,7 @@ class SettingsWindowGTK3:
         self._build_provider_tab()
         self._build_stt_tab()
         self._build_tts_tab()
+        self._build_plugins_tab()
         self._build_general_tab()
 
         self.win.connect("destroy", Gtk.main_quit)
@@ -688,6 +689,154 @@ class SettingsWindowGTK3:
         ui.set_active_id(self.cfg.get_string("ui", "default_ui") or "orb")
         ui.connect("changed", lambda w: self.cfg.set("ui", "default_ui", w.get_active_id() or "orb"))
         self._row(card, "Interfaz predeterminada", "UI que abren el botón del .desktop y el autostart", ui)
+
+
+    def _build_plugins_tab(self) -> None:
+        page = self._page_scrolled("Plugins", "plugins")
+        import json as _json
+        from pathlib import Path as _Path
+
+        from sayri import plugin_settings
+        from sayri.gateway_supervisor import GatewaySupervisor
+
+        card = self._card(page, "Plugins instalados")
+        installed = GatewaySupervisor.get_instance().list_installed_plugins()
+        if not installed:
+            lbl = Gtk.Label(label="No hay plugins instalados. Descarga uno desde la pulsar-store.")
+            lbl.set_halign(Gtk.Align.START)
+            card.pack_start(lbl, False, False, 0)
+            return
+
+        for pl in installed:
+            dirp = _Path(pl["path"])
+            mpath = dirp if dirp.is_file() else dirp / "manifest.json"
+            manifest: dict = {}
+            try:
+                manifest = _json.loads(mpath.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                pass
+            lvl = manifest.get("sandbox_level") or manifest.get("min_sandbox_level") or "-"
+            subtitle = f"{pl.get('description', '')}  ·  sandbox: {lvl}"
+
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.set_hexpand(True)
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            vbox.set_hexpand(True)
+            vbox.set_halign(Gtk.Align.START)
+            t = Gtk.Label(label=f"{pl.get('name', pl.get('id'))}  ·  v{pl.get('version', '?')}")
+            t.get_style_context().add_class("sayri-row-title")
+            t.set_halign(Gtk.Align.START)
+            vbox.pack_start(t, False, False, 0)
+            s = Gtk.Label(label=subtitle)
+            s.get_style_context().add_class("sayri-row-subtitle")
+            s.set_halign(Gtk.Align.START)
+            s.set_wrap(True)
+            vbox.pack_start(s, False, False, 0)
+            box.pack_start(vbox, True, True, 0)
+
+            if plugin_settings.settings_schema(manifest):
+                btn = Gtk.Button(label="Settings…")
+                btn.connect("clicked", lambda *a, _d=dirp, _m=manifest:
+                            self._open_plugin_settings(_d, _m))
+                btn.set_halign(Gtk.Align.END)
+                box.pack_end(btn, False, False, 0)
+            else:
+                none_lbl = Gtk.Label(label="no settings")
+                none_lbl.set_halign(Gtk.Align.END)
+                none_lbl.get_style_context().add_class("sayri-row-subtitle")
+                box.pack_end(none_lbl, False, False, 0)
+
+            card.pack_start(box, False, False, 0)
+
+    def _open_plugin_settings(self, plugin_dir, manifest: dict) -> None:
+        import json as _json
+        from sayri import plugin_settings
+
+        ui = plugin_settings.settings_schema(manifest)
+        if not ui:
+            return
+        title = f"{manifest.get('name', manifest.get('id', 'Plugin'))} — Settings"
+        dlg = Gtk.Dialog(title=title, transient_for=self.win, modal=True)
+        dlg.set_default_size(600, 460)
+        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        ok_btn = dlg.add_button("Save", Gtk.ResponseType.OK)
+        ok_btn.get_style_context().add_class("suggested-action")
+
+        box = dlg.get_content_area()
+        box.set_spacing(10)
+        box.set_margin_top(14)
+        box.set_margin_bottom(14)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+
+        sc = Gtk.ScrolledWindow()
+        sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sc.set_vexpand(True)
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        sc.add(form)
+        box.pack_start(sc, True, True, 0)
+
+        header = Gtk.Label(label=ui.get("sync_instructions") or "Plugin settings")
+        header.set_halign(Gtk.Align.START)
+        header.set_wrap(True)
+        header.get_style_context().add_class("sayri-row-subtitle")
+        box.pack_start(header, False, False, 0)
+
+        values = plugin_settings.read_values(manifest)
+        makers = []
+        for n in ui.get("settings", []):
+            t = n.get("t")
+            if t == "note":
+                lbl = Gtk.Label(label=n.get("text", ""))
+                lbl.set_halign(Gtk.Align.START)
+                lbl.set_wrap(True)
+                form.pack_start(lbl, False, False, 0)
+                continue
+            if t in ("text", "sub"):
+                lbl = Gtk.Label(label=n.get("text", ""))
+                lbl.set_halign(Gtk.Align.START)
+                lbl.set_wrap(True)
+                form.pack_start(lbl, False, False, 0)
+                continue
+            if t == "spacer":
+                continue
+            if t not in plugin_settings.EDITABLE or not (n.get("id") and n.get("key")):
+                continue
+            key = n["key"]
+            cur = values.get(key, n.get("default", ""))
+            if t == "entry":
+                w = Gtk.Entry()
+                w.set_placeholder_text(n.get("placeholder", "") or "")
+                w.set_text(str(cur) if cur not in (None, "") else str(n.get("default", "")))
+                if n.get("secret"):
+                    w.set_visibility(False)
+            elif t == "check":
+                w = Gtk.Switch()
+                w.set_active(bool(cur if cur is not None else n.get("default", False)))
+            else:  # select
+                w = Gtk.ComboBoxText()
+                opts_vals = [o.get("value", "") for o in n.get("options", [])]
+                for o in n.get("options", []):
+                    w.append(o.get("value", ""), o.get("label") or o.get("value", ""))
+                w.set_active_id(selected if selected in opts_vals else (opts_vals[0] if opts_vals else ""))
+            self._row(form, n.get("label") or n.get("id") or key, n.get("hint", ""), w)
+            makers.append((w, n))
+
+        dlg.show_all()
+        resp = dlg.run()
+        if resp == Gtk.ResponseType.OK:
+            saved = []
+            for w, n in makers:
+                key = n["key"]
+                if n.get("t") == "check":
+                    v = w.get_active()
+                elif n.get("t") == "select":
+                    v = w.get_active_id() or ""
+                else:
+                    v = w.get_text()
+                if plugin_settings.write_setting(manifest, key, v):
+                    saved.append(key)
+        dlg.destroy()
 
 
 def main() -> None:

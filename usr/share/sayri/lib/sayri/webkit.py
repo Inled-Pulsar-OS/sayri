@@ -365,29 +365,36 @@ def _serve_uri(request: WebKit.URISchemeRequest) -> None:
     path = urllib.parse.urlparse(uri).path.lstrip("/")
     if not path:
         path = "index.html"
-    full = os.path.join(paths.data_dir(), path)
-    if os.path.isfile(full):
-        try:
-            with open(full, "rb") as fh:
-                body = fh.read()
-            if full.endswith(".wasm"):
-                ctype = "application/wasm"
-            elif full.endswith(".js"):
-                ctype = "application/javascript"
-            elif full.endswith(".json"):
-                ctype = "application/json"
-            elif full.endswith(".html"):
-                ctype = "text/html; charset=utf-8"
-            elif full.endswith(".svg"):
-                ctype = "image/svg+xml"
-            else:
-                ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
-            stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(body))
-            request.finish(stream, len(body), ctype)
-            return
-        except Exception as exc:  # noqa: BLE001
-            print(f"[sayri] error serving {uri}: {exc}")
-    print(f"[sayri] 404 Not Found: {uri} (searched in {full})")
+    # xui pages (welcome wizard, plugin wizards) live in the state dir; the rest
+    # in the data dir (exported web orb build).
+    candidates: list[str] = []
+    if path.startswith("xui/"):
+        candidates.append(os.path.join(paths.state_dir(), "xui"))
+    candidates.append(paths.data_dir())
+    for base in candidates:
+        full = os.path.join(base, path)
+        if os.path.isfile(full):
+            try:
+                with open(full, "rb") as fh:
+                    body = fh.read()
+                if full.endswith(".wasm"):
+                    ctype = "application/wasm"
+                elif full.endswith(".js"):
+                    ctype = "application/javascript"
+                elif full.endswith(".json"):
+                    ctype = "application/json"
+                elif full.endswith(".html"):
+                    ctype = "text/html; charset=utf-8"
+                elif full.endswith(".svg"):
+                    ctype = "image/svg+xml"
+                else:
+                    ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
+                stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(body))
+                request.finish(stream, len(body), ctype)
+                return
+            except Exception as exc:  # noqa: BLE001
+                print(f"[sayri] error serving {uri}: {exc}")
+    print(f"[sayri] 404 Not Found: {uri} (searched in {', '.join(candidates)})")
     request.finish_error(
         GLib.Error.new_literal(GLib.quark_from_string("sayri"), f"not found: {path}", 404)
     )

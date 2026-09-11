@@ -1632,6 +1632,101 @@ class SayriCajita(Gtk.Box):
             desc_lbl.set_wrap(True)
             box.append(desc_lbl)
 
+            # ── Functional plugin settings (declared in ui.settings) ──
+            manifest = {}
+            p_dir = plugin_data.get("path")
+            if p_dir is not None and (Path(p_dir) / "manifest.json").is_file():
+                try:
+                    manifest = json.loads((Path(p_dir) / "manifest.json").read_text(encoding="utf-8"))
+                except Exception:
+                    manifest = {}
+            saved_fields = []
+            if manifest:
+                from sayri import plugin_settings as ps
+
+                editable = ps.editable_fields(ps.settings_schema(manifest))
+                if editable:
+                    st_title = Gtk.Label()
+                    st_title.set_halign(Gtk.Align.START)
+                    st_title.set_markup("<span weight='700' size='9500' foreground='#1e74fb'>PLUGIN SETTINGS</span>")
+                    box.append(st_title)
+
+                    fpath = Gtk.Label()
+                    fpath.set_halign(Gtk.Align.START)
+                    fpath.set_wrap(True)
+                    fpath.set_markup(f"<span size='8300' foreground='#94a3b8'>Config file: {GLib.markup_escape_text(str(ps.settings_file_path(manifest)))}</span>")
+                    box.append(fpath)
+
+                    current = ps.read_values(manifest)
+                    for n in editable:
+                        wid, key, t = n.get("id"), n.get("key"), n.get("t")
+                        cur = current.get(key)
+                        if cur in (None, ""):
+                            cur = n.get("default", "")
+                        lbl = Gtk.Label()
+                        lbl.set_halign(Gtk.Align.START)
+                        lbl.set_markup(f"<span foreground='#94a3b8' size='9000'><b>{GLib.markup_escape_text(n.get('label') or wid)}</b></span>")
+                        if t == "select":
+                            opts = n.get("options", []) or []
+                            model = Gtk.StringList.new([o.get("label") or str(o.get("value")) for o in opts])
+                            drop = Gtk.DropDown.new(model, None)
+                            sel = 0
+                            for i, o in enumerate(opts):
+                                if str(o.get("value")) == str(cur):
+                                    sel = i
+                                    break
+                            drop.set_selected(sel)
+                            wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                            wrap.append(lbl)
+                            wrap.append(drop)
+                            box.append(wrap)
+                            saved_fields.append((key, drop, opts))
+                        elif t == "check":
+                            chk = Gtk.CheckButton(label=n.get("label") or wid)
+                            chk.set_active(str(cur).lower() in ("1", "true", "yes", "on"))
+                            box.append(chk)
+                            saved_fields.append((key, chk, None))
+                        else:
+                            e = Gtk.Entry()
+                            e.add_css_class("sayri-settings-entry")
+                            e.set_text(str(cur))
+                            box.append(lbl)
+                            box.append(e)
+                            if n.get("hint"):
+                                h = Gtk.Label()
+                                h.set_halign(Gtk.Align.START)
+                                h.set_wrap(True)
+                                h.set_markup(f"<span size='8200' foreground='#64748b'>{GLib.markup_escape_text(n.get('hint'))}</span>")
+                                box.append(h)
+                            saved_fields.append((key, e, None))
+                    if saved_fields:
+                        s_hint = Gtk.Label()
+                        s_hint.set_halign(Gtk.Align.START)
+                        s_hint.set_wrap(True)
+                        s_hint.set_markup("<span size='8200' foreground='#94a3b8'>Changes apply the next time the plugin/server starts.</span>")
+                        box.append(s_hint)
+
+                        def _save_settings(_b):
+                            for key, w, opts in list(saved_fields):
+                                try:
+                                    if opts is not None:
+                                        val = opts[w.get_selected()]["value"]
+                                    elif isinstance(w, Gtk.CheckButton):
+                                        val = str(bool(w.get_active())).lower()
+                                    else:
+                                        val = w.get_text()
+                                    ps.write_setting(manifest, key, str(val))
+                                except Exception:
+                                    pass
+                            self._populate_plugins_tools()
+                            self.switch_tab("plugins")
+
+                        save_ps = Gtk.Button(label="Save plugin settings")
+                        save_ps.add_css_class("sayri-action-btn")
+                        save_ps.add_css_class("primary")
+                        save_ps.connect("clicked", _save_settings)
+                        box.append(save_ps)
+
             lbl_sb = Gtk.Label(label="Minimum Required Sandbox Level:")
             lbl_sb.set_halign(Gtk.Align.START)
             box.append(lbl_sb)
@@ -2183,6 +2278,14 @@ class SayriCajita(Gtk.Box):
         b3, model_entry = _field("Model Name", cur_model)
         b4, strip_entry = _field("Strip / Filter Words or Tags (e.g. <think>.*?</think>)", cur_strip)
         b5, wake_entry = _field("Wakeword Trigger", cur_wakeword)
+
+        # Re-open the setup wizard (provider, Prism ML, voice, STT) from the UI
+        wiz_btn = Gtk.Button(label="✳ Reopen the setup wizard (provider · Prism ML · voice · STT)")
+        wiz_btn.add_css_class("sayri-action-btn")
+        wiz_btn.add_css_class("primary")
+        wiz_btn.set_halign(Gtk.Align.START)
+        wiz_btn.connect("clicked", lambda _b: self.app.open_wizard())
+        self.settings_box.append(wiz_btn)
 
         self.settings_box.append(b1)
         self.settings_box.append(b2)

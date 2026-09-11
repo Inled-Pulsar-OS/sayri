@@ -7,6 +7,7 @@ without pulling in a display stack.
 from __future__ import annotations
 
 import os
+import platform
 import re
 
 
@@ -77,4 +78,9 @@ def detect_os() -> str:
                 return "Fedora"
     except Exception:
         pass
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macOS"
+    if system == "windows":
+        return "Windows"
     return "Linux"

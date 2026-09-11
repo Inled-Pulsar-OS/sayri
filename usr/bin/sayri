@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# Sayri - Siri-like voice assistant for Pulsar OS
+# Sayri - personal AI assistant (voice-first, homeserver-friendly)
 # ==============================================================================
 # Wrapper so the Python app can live in /usr/share/sayri/lib.
 #

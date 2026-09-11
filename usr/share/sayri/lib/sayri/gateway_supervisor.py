@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from sayri import paths, sysinfo
 from sayri.domain.secrets_manager import secrets_manager
 
-INSTANCES_FILE = Path.home() / ".config" / "sayri" / "gateway_instances.json"
+INSTANCES_FILE = Path(paths.config_dir()) / "gateway_instances.json"
 
 
 class GatewaySupervisor:
@@ -36,8 +36,8 @@ class GatewaySupervisor:
     @staticmethod
     def _get_search_dirs() -> List[Path]:
         dirs = [
-            Path.home() / ".config" / "sayri" / "plugins",
-            Path("/usr/share/sayri/plugins"),
+            Path(paths.plugins_dir()),
+            Path(paths.shared_plugins_dir()),
         ]
         # Dev checkout: PKG/sayri/.../gateway_supervisor.py -> <repo>/../packages/plugins
         dev_pkg = Path(__file__).resolve().parent.parent.parent.parent.parent.parent.parent.parent / "packages" / "plugins"
@@ -222,16 +222,16 @@ class GatewaySupervisor:
         env["SAYRI_ALLOW_RESUME_PREVIOUS"] = "1" if inst.get("allow_resume_previous", True) else "0"
         timeout_secs = int(inst.get("inactivity_timeout_minutes", 30)) * 60
         env["SAYRI_INACTIVITY_TIMEOUT"] = str(timeout_secs)
-        env["SAYRI_PID_FILE"] = str(Path.home() / ".config" / "sayri" / f"gateway_{instance_id}.pid")
-        env["SAYRI_AUTH_FILE"] = str(Path.home() / ".config" / "sayri" / f"authorizations_{instance_id}.json")
-        env["SAYRI_PIN_FILE"] = str(Path.home() / ".config" / "sayri" / f"pairing_pin_{instance_id}.json")
+        env["SAYRI_PID_FILE"] = str(Path(paths.config_dir()) / f"gateway_{instance_id}.pid")
+        env["SAYRI_AUTH_FILE"] = str(Path(paths.config_dir()) / f"authorizations_{instance_id}.json")
+        env["SAYRI_PIN_FILE"] = str(Path(paths.config_dir()) / f"pairing_pin_{instance_id}.json")
 
         sayri_lib = Path(__file__).resolve().parent
         env["PYTHONPATH"] = f"{sayri_lib.parent}:{env.get('PYTHONPATH', '')}"
         env["PYTHONUNBUFFERED"] = "1"
 
         try:
-            log_dir = Path.home() / ".local" / "share" / "sayri" / "logs"
+            log_dir = Path(paths.state_dir()) / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"{instance_id}.log"
             log_handle = open(log_file, "a", encoding="utf-8")
@@ -242,7 +242,7 @@ class GatewaySupervisor:
                 env=env,
                 stdout=log_handle,
                 stderr=log_handle,
-                start_new_session=True,
+                **sysinfo.spawn_flags(),
             )
             self._processes[instance_id] = proc
             print(f"[Supervisor] 🚀 Started gateway instance '{inst.get('name')}' ({instance_id}, PID: {proc.pid}) -> Agent: {inst.get('agent_id')}, Sandbox: {inst.get('sandbox_level')}")
@@ -269,15 +269,12 @@ class GatewaySupervisor:
             print(f"[Supervisor] ⏹️ Stopped gateway instance '{instance_id}'")
 
         # Also cleanup PID file process if exists
-        pid_file = Path.home() / ".config" / "sayri" / f"gateway_{instance_id}.pid"
+        pid_file = Path(paths.config_dir()) / f"gateway_{instance_id}.pid"
         if pid_file.is_file():
             try:
                 old_pid = int(pid_file.read_text().strip())
                 if old_pid != os.getpid():
-                    try:
-                        os.kill(old_pid, signal.SIGTERM)
-                    except OSError:
-                        pass
+                    sysinfo.terminate_pid(old_pid)
             except Exception:
                 pass
 

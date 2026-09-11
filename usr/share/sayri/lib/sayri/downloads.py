@@ -10,6 +10,7 @@ Sources:
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import tarfile
 import urllib.error
@@ -17,7 +18,7 @@ import urllib.request
 import zipfile
 from typing import Callable, Optional
 
-from . import paths
+from . import paths, sysinfo
 
 # ---------------------------------------------------------------------------
 # whisper.cpp models (multilingual; .en variants are English-only)
@@ -124,14 +125,44 @@ PIPER_VOICES: dict[str, list[dict]] = {
 # ---------------------------------------------------------------------------
 # Runtime binaries (static builds, used when the distro packages are missing)
 # ---------------------------------------------------------------------------
-WHISPER_CLI_URL = (
-    "https://github.com/ggml-org/whisper.cpp/releases/download/b4938/"
-    "whisper-bin-ubuntu-x64.tar.gz"
-)
-PIPER_URL = (
-    "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/"
-    "piper_linux_x86_64.tar.gz"
-)
+WHISPER_BIN_BASE = "https://github.com/ggml-org/whisper.cpp/releases/download/b4938"
+PIPER_BIN_BASE = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2"
+
+
+def _is_arm64() -> bool:
+    m = platform.machine().lower()
+    return "aarch64" in m or "arm64" in m
+
+
+def whisper_cli_asset():
+    """Return (url, archive_kind) for the current platform's whisper-cli build.
+
+    Raises DownloadError on platforms without a prebuilt CLI asset.
+    """
+    if sysinfo.is_windows():
+        return f"{WHISPER_BIN_BASE}/whisper-bin-x64.zip", "zip"
+    if sysinfo.is_linux():
+        suffix = "arm64" if _is_arm64() else "x64"
+        return f"{WHISPER_BIN_BASE}/whisper-bin-ubuntu-{suffix}.tar.gz", "tar"
+    # macOS: whisper.cpp ships only an xcframework (no standalone binary).
+    raise DownloadError(
+        "whisper-cli has no prebuilt download for macOS; install it with "
+        "'brew install whisper-cpp' and run this command again"
+    )
+
+
+def piper_asset():
+    """Return (url, archive_kind) for the current platform's piper build."""
+    if sysinfo.is_windows():
+        return f"{PIPER_BIN_BASE}/piper_windows_amd64.zip", "zip"
+    if sysinfo.is_macos():
+        # Note: the macOS archives were built on Intel runners; the
+        # "aarch64" tarball actually contains an x86_64 shim (works under
+        # Rosetta). Pick by name for arch-correctness.
+        suffix = "aarch64" if _is_arm64() else "x64"
+        return f"{PIPER_BIN_BASE}/piper_macos_{suffix}.tar.gz", "tar"
+    suffix = "aarch64" if _is_arm64() else "x86_64"
+    return f"{PIPER_BIN_BASE}/piper_linux_{suffix}.tar.gz", "tar"
 
 
 class DownloadError(Exception):
@@ -270,14 +301,30 @@ def download_piper_voice(
     return onnx_dest
 
 
+def _local_binary(name: str) -> str:
+    """Return the installed path of `name`, handling the .exe suffix on Windows."""
+    candidates = [name]
+    if sysinfo.is_windows():
+        candidates.append(name + ".exe")
+    for cand in candidates:
+        for root, _dirs, files in os.walk(paths.bin_dir()):
+            if cand in files:
+                return os.path.join(root, cand)
+    return ""
+
+
 def install_whisper_cli(progress: Optional[Callable[[float], None]] = None) -> str:
     """Download the whisper.cpp build and extract whisper-cli and libraries."""
-    archive = os.path.join(paths.tmp_dir(), "whisper-bin.tar.gz")
+    url, kind = whisper_cli_asset()
+    ext = "zip" if kind == "zip" else "tar.gz"
+    archive = os.path.join(paths.tmp_dir(), f"whisper-bin.{ext}")
     extract_dir = os.path.join(paths.tmp_dir(), "whisper-bin")
-    download_file(WHISPER_CLI_URL, archive, progress)
+    download_file(url, archive, progress)
     shutil.rmtree(extract_dir, ignore_errors=True)
-    _extract_tar(archive, extract_dir)
-    dest = os.path.join(paths.bin_dir(), "whisper-cli")
+    if kind == "zip":
+        _extract_zip(archive, extract_dir)
+    else:
+        _extract_tar(archive, extract_dir)
     for root, _dirs, files in os.walk(extract_dir):
         for f in files:
             src = os.path.join(root, f)
@@ -288,26 +335,32 @@ def install_whisper_cli(progress: Optional[Callable[[float], None]] = None) -> s
                     os.chmod(dst, 0o755)
                 except OSError:
                     pass
-    if os.path.isfile(dest):
+    dest = _local_binary("whisper-cli")
+    if dest:
         return dest
     raise DownloadError("whisper-cli not found inside the downloaded archive")
 
 
 def install_piper(progress: Optional[Callable[[float], None]] = None) -> str:
     """Download the piper build and extract binary, libraries and espeak-ng-data."""
-    archive = os.path.join(paths.tmp_dir(), "piper.tar.gz")
+    url, kind = piper_asset()
+    ext = "zip" if kind == "zip" else "tar.gz"
+    archive = os.path.join(paths.tmp_dir(), f"piper.{ext}")
     extract_dir = os.path.join(paths.tmp_dir(), "piper")
-    download_file(PIPER_URL, archive, progress)
+    download_file(url, archive, progress)
     shutil.rmtree(extract_dir, ignore_errors=True)
-    _extract_tar(archive, extract_dir)
-    dest = os.path.join(paths.bin_dir(), "piper")
+    if kind == "zip":
+        _extract_zip(archive, extract_dir)
+    else:
+        _extract_tar(archive, extract_dir)
+    dest = _local_binary("piper")
     espeak_dest = os.path.join(paths.bin_dir(), "espeak-ng-data")
     for root, dirs, files in os.walk(extract_dir):
         for f in files:
             src = os.path.join(root, f)
             dst = os.path.join(paths.bin_dir(), f)
             shutil.copy2(src, dst)
-            if f in ("piper", "espeak-ng") or f.endswith(".so") or ".so." in f:
+            if f in ("piper", "piper.exe", "espeak-ng") or f.endswith(".so") or ".so." in f:
                 try:
                     os.chmod(dst, 0o755)
                 except OSError:

@@ -8,6 +8,7 @@ isolated sandbox environment variables at tool execution time.
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import json
 import os
@@ -15,6 +16,8 @@ import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+from sayri import paths
 
 
 class SecretsManager:
@@ -24,7 +27,7 @@ class SecretsManager:
 
     def __init__(self, secrets_file: Optional[Path] = None):
         if secrets_file is None:
-            self.secrets_file = Path.home() / ".config" / "sayri" / "vault.json"
+            self.secrets_file = Path(paths.config_dir()) / "vault.json"
         else:
             self.secrets_file = Path(secrets_file)
 
@@ -39,14 +42,21 @@ class SecretsManager:
         return cls._instance
 
     def _derive_machine_salt(self) -> bytes:
-        machine_id = "/etc/machine-id"
         seed = b"sayri-zero-plaintext-vault"
+        machine_id = "/etc/machine-id"
         if os.path.exists(machine_id):
             try:
                 seed += Path(machine_id).read_bytes()
             except Exception:
                 pass
-        seed += str(os.getuid()).encode("utf-8")
+        if hasattr(os, "getuid"):
+            try:
+                seed += str(os.getuid()).encode("utf-8")
+            except Exception:
+                seed += getpass.getuser().encode("utf-8")
+        else:
+            # Windows: no POSIX uids; the username is a stable user-scoped seed.
+            seed += getpass.getuser().encode("utf-8")
         return hashlib.sha256(seed).digest()
 
     def _obfuscate(self, text: str) -> str:

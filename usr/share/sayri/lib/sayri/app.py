@@ -63,8 +63,8 @@ def _get_effective_system_prompt(cfg) -> str:
     user_f = paths.user_file()
     skills_d = paths.skills_dir()
     return (
-        f"You are Sayri, the intelligent voice assistant and autonomous agent integrated into Pulsar OS (based on {distro}).\n"
-        f"The current system user is '{username}'. Their profile and data are in `{user_f}`.\n"
+        f"You are Sayri, the personal AI assistant and autonomous agent of the user '{username}' (running on {distro}).\n"
+        f"Their profile and data are in `{user_f}`.\n"
         f"Your long-term memory of memories and preferences is in `{mem_file}` (you can read it or add notes with bash).\n"
         f"Your installed ClawHub/OpenClaw skills are in `{skills_d}`. You can list your skills with `ls {skills_d}` and read their guides with `cat {skills_d}/<skill>/SKILL.md`.\n"
         "You can search for or download new skills from ClawHub (https://clawhub.ai) using the `sayri-skills install <skill-name>` or `sayri-skills search <query>` command.\n"
@@ -122,8 +122,8 @@ class SayriApp(Gtk.Application):
         self.active_agent: AgentProfile = AgentCreator.get_agent("default") or AgentProfile(
             id="default",
             name="Main Sayri",
-            description="Operating system assistant for Pulsar OS",
-            system_prompt="You are Sayri, the intelligent assistant of Pulsar OS.",
+            description="Personal AI assistant and autonomous agent",
+            system_prompt="You are Sayri, the personal AI assistant of the user.",
         )
         self.active_session_id = self.storage.create_session(agent_id=self.active_agent.id).id
 
@@ -192,13 +192,18 @@ class SayriApp(Gtk.Application):
             self._build_ui()
 
         # Check if first run or no AI provider configured
+        setup_done = bool(self.cfg.get_bool("ui", "setup_complete"))
         has_api_key = bool(self.cfg.get_string("provider", "api_key").strip())
-        is_first_run = getattr(self.cfg, "_is_first_run", False) or not has_api_key
-        self._setup_needed = is_first_run or not has_api_key
+        is_first_run = getattr(self.cfg, "_is_first_run", False)
+        self._setup_needed = (is_first_run or not has_api_key) and not setup_done
 
-        if is_first_run or not has_api_key:
+        if self._setup_needed:
             self._show_setup_prompt()
             self.overlay.show()
+            # On a genuine first run open the full wizard window (CLI & GUI
+            # share the same host logic in wizard.py / xui.py).
+            if is_first_run and not setup_done:
+                GLib.idle_add(self.open_wizard)
         else:
             if not self.is_autostart:
                 self.overlay.show()
@@ -1056,6 +1061,21 @@ class SayriApp(Gtk.Application):
             if self.settings_win is None:
                 self.settings_win = settings_window.SettingsWindow(self)
             self.settings_win.show()
+
+    def open_wizard(self) -> None:
+        """Open (or focus) the welcome wizard window (xui, shared with the CLI)."""
+        try:
+            from . import xui_window
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Sayri] wizard not available: {exc}")
+            self._show_setup_prompt()
+            return
+        win = getattr(self, "_wizard_win", None)
+        if win is not None and win.is_visible():
+            win.present()
+            return
+        self._wizard_win = xui_window.open_wizard(self)
+        self._wizard_win.present()
 
     def refresh_status(self) -> None:
         if self.settings_win is not None:

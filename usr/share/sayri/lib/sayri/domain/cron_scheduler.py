@@ -13,7 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-ROUTINES_FILE = Path.home() / ".config" / "sayri" / "routines.json"
+from sayri import paths
+
+ROUTINES_FILE = Path(paths.config_dir()) / "routines.json"
 
 
 @dataclass

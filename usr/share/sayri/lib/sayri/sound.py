@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from typing import Optional
 
-from . import paths
+from . import paths, sysinfo
 
 _loop_running = False
 _loop_thread: Optional[threading.Thread] = None
@@ -17,8 +18,29 @@ _active_procs: list[subprocess.Popen] = []
 _lock = threading.Lock()
 
 
+def _winsound_cmd(sound_file: str) -> list[str]:
+    """Windows-only fallback: play a file through the built-in winsound module
+    in a child process so the callers' kill semantics keep working."""
+    code = "import sys, winsound; winsound.PlaySound(sys.argv[1], winsound.SND_FILENAME)"
+    return [sys.executable, "-c", code, sound_file]
+
+
 def _get_player_cmd(sound_file: str) -> list[str]:
-    """Find appropriate audio player binary."""
+    """Find appropriate audio player binary (per platform)."""
+    if sysinfo.is_windows():
+        if shutil.which("ffplay"):
+            return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", "85", sound_file]
+        if sys.platform == "win32":
+            return _winsound_cmd(sound_file)
+        return []
+    if sysinfo.is_macos():
+        if shutil.which("afplay"):
+            return ["afplay", sound_file]
+        if shutil.which("ffplay"):
+            return ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", "85", sound_file]
+        if shutil.which("gst-play-1.0"):
+            return ["gst-play-1.0", "--no-interactive", sound_file]
+        return []
     if shutil.which("pw-play"):
         return ["pw-play", "--volume", "0.85", sound_file]
     if shutil.which("paplay"):

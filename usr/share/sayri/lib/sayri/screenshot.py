@@ -1,4 +1,4 @@
-"""Screenshot utility for Sayri on Pulsar OS (Wayland & X11)."""
+"""Screenshot utility for Sayri (Linux Wayland/X11, macOS and Windows)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import subprocess
 import time
 from typing import Optional
 
-from . import paths
+from . import paths, sysinfo
 
 
 def take_screenshot(dest_path: Optional[str] = None) -> str:
@@ -18,7 +18,60 @@ def take_screenshot(dest_path: Optional[str] = None) -> str:
 
     os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
 
-    # 1. Try GNOME Shell DBus method (native GNOME Wayland)
+    # 1. macOS: built-in screencapture
+    if sysinfo.is_macos():
+        if shutil.which("screencapture"):
+            try:
+                res = subprocess.run(
+                    ["screencapture", "-x", dest_path], capture_output=True, timeout=12
+                )
+                if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                    print(f"[Screenshot] ✓ Saved screencapture screenshot: {dest_path}")
+                    return dest_path
+            except Exception:
+                pass
+        raise RuntimeError(
+            f"Could not take screenshot on macOS: 'screencapture' unavailable for {dest_path}"
+        )
+
+    # 2. Windows: PowerShell + System.Drawing (built into .NET)
+    if sysinfo.is_windows():
+        ps_cmd = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "Add-Type -AssemblyName System.Drawing;"
+            "$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;"
+            "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+            "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+            "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size);"
+            f"$bmp.Save('{dest_path}')"
+        )
+        try:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, timeout=15,
+            )
+            if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                print(f"[Screenshot] ✓ Saved PowerShell screenshot: {dest_path}")
+                return dest_path
+        except Exception:
+            pass
+        # Fallback: ffmpeg gdigrab
+        if shutil.which("ffmpeg"):
+            try:
+                res = subprocess.run(
+                    ["ffmpeg", "-y", "-f", "gdigrab", "-i", "desktop", "-frames:v", "1", dest_path],
+                    capture_output=True, timeout=15,
+                )
+                if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                    print(f"[Screenshot] ✓ Saved ffmpeg gdigrab screenshot: {dest_path}")
+                    return dest_path
+            except Exception:
+                pass
+        raise RuntimeError(
+            f"Could not take screenshot on Windows: no supported tool found (PowerShell, ffmpeg) for {dest_path}"
+        )
+
+    # 3. Try GNOME Shell DBus method (native GNOME Wayland)
     try:
         cmd = [
             "gdbus", "call", "--session",
@@ -44,7 +97,7 @@ def take_screenshot(dest_path: Optional[str] = None) -> str:
         except Exception:
             pass
 
-    # 3. Try grim (standard Wayland)
+    # 4. Try grim (standard Wayland)
     if shutil.which("grim"):
         try:
             res = subprocess.run(["grim", dest_path], capture_output=True, timeout=8)
@@ -54,7 +107,7 @@ def take_screenshot(dest_path: Optional[str] = None) -> str:
         except Exception:
             pass
 
-    # 4. Try spectacle (KDE)
+    # 5. Try spectacle (KDE)
     if shutil.which("spectacle"):
         try:
             res = subprocess.run(["spectacle", "-b", "-n", "-o", dest_path], capture_output=True, timeout=8)
@@ -64,7 +117,7 @@ def take_screenshot(dest_path: Optional[str] = None) -> str:
         except Exception:
             pass
 
-    # 5. Try ImageMagick import (X11)
+    # 6. Try ImageMagick import (X11)
     if shutil.which("import") and os.environ.get("DISPLAY"):
         try:
             res = subprocess.run(["import", "-window", "root", dest_path], capture_output=True, timeout=8)

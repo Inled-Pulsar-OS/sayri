@@ -253,6 +253,7 @@ class SettingsWindow:
         self._build_agents_tab()
         self._build_stt_tab()
         self._build_tts_tab()
+        self._build_plugins_tab()
         self._build_general_tab()
 
         self.win.connect("close-request", self._on_close)
@@ -726,6 +727,10 @@ class SettingsWindow:
         ui.connect("changed", lambda w: self.cfg.set("ui", "default_ui", w.get_active_id() or "orb"))
         self._row(card, "Interfaz predeterminada", "UI que abren el botón del .desktop y el autostart", ui)
 
+        btn_wizard = Gtk.Button(label="Re-run Welcome Wizard")
+        btn_wizard.connect("clicked", lambda *_: getattr(self.app, "open_wizard", lambda: None)())
+        self._row(card, "Setup Wizard", "Re-run the one-minute setup (language, provider, voice, STT)", btn_wizard)
+
     def _build_agents_tab(self) -> None:
         page = self._page_scrolled("Sub-Agents & Security", "agents")
 
@@ -769,3 +774,67 @@ class SettingsWindow:
         audit_lbl = Gtk.Label(label="Active ✓ (AST/Regex Scan)")
         audit_lbl.add_css_class("sayri-status-ok")
         self._row(c3, "ClawHub Pre-Flight Auditor", "Static security analysis before installing skills", audit_lbl)
+
+    def _build_plugins_tab(self) -> None:
+        import json as _json
+        from pathlib import Path as _Path
+
+        from sayri import plugin_settings
+        from sayri.gateway_supervisor import GatewaySupervisor
+
+        page = self._page_scrolled("Plugins", "plugins")
+        card = self._card(page, "Plugins instalados")
+        installed = GatewaySupervisor.get_instance().list_installed_plugins()
+        if not installed:
+            lbl = Gtk.Label(label="No hay plugins instalados. Descarga uno desde la pulsar-store.")
+            lbl.set_halign(Gtk.Align.START)
+            card.append(lbl)
+            return
+
+        for pl in installed:
+            dirp = _Path(pl["path"])
+            mpath = dirp if dirp.is_file() else dirp / "manifest.json"
+            manifest: dict = {}
+            try:
+                manifest = _json.loads(mpath.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                pass
+            lvl = manifest.get("sandbox_level") or manifest.get("min_sandbox_level") or "-"
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.set_hexpand(True)
+            box.set_valign(Gtk.Align.CENTER)
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            vbox.set_hexpand(True)
+            vbox.set_halign(Gtk.Align.START)
+            t = Gtk.Label(label=f"{pl.get('name', pl.get('id'))}  ·  v{pl.get('version', '?')}")
+            t.set_halign(Gtk.Align.START)
+            vbox.append(t)
+            s = Gtk.Label(label=f"{pl.get('description', '')}  ·  sandbox: {lvl}")
+            s.set_halign(Gtk.Align.START)
+            s.set_wrap(True)
+            vbox.append(s)
+            box.append(vbox)
+
+            if plugin_settings.settings_schema(manifest):
+                btn = Gtk.Button(label="Settings in terminal…")
+                pid = pl.get("id", "")
+                btn.connect(
+                    "clicked",
+                    lambda *a, _pid=pid: self._launch_plugin_settings_terminal(_pid),
+                )
+                box.append(btn)
+            else:
+                none_lbl = Gtk.Label(label="no settings")
+                none_lbl.set_halign(Gtk.Align.END)
+                box.append(none_lbl)
+            card.append(box)
+
+    @staticmethod
+    def _launch_plugin_settings_terminal(plugin_id: str) -> None:
+        import subprocess
+        cmd = f"sayri plugins settings {plugin_id}"
+        term = os.environ.get("SAYRI_TERMINAL") or "x-terminal-emulator"
+        try:
+            subprocess.Popen([term, "-e", "sh", "-c", cmd])
+        except Exception:  # noqa: BLE001
+            subprocess.Popen(["sh", "-c", cmd])

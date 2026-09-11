@@ -9,6 +9,7 @@ import tempfile
 import time
 from typing import Tuple
 
+from sayri import sysinfo
 from sayri.domain.models import SandboxConfig, SandboxLevel
 from sayri.domain.secrets_manager import secrets_manager
 
@@ -118,7 +119,7 @@ class SandboxExecutor:
                     env=env,
                     stdout=tmp_out,
                     stderr=tmp_err,
-                    start_new_session=True,
+                    **sysinfo.spawn_flags(),
                 )
 
                 poll_start = time.monotonic()

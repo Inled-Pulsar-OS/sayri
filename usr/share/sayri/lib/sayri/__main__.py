@@ -1,12 +1,17 @@
 import os
 import sys
 
-# Any plain word hands off to the headless CLI (daemon/CLI/UI-plugin commands).
-# GUI flags (and no-args startup) keep going to the GTK app as before.
+# Plain words hand off to the headless CLI (daemon/CLI/UI-plugin commands).
+# GUI flags (and autostart/launch-ui) keep going to the GTK app as before.
+# A bare `sayri` runs the CLI default: the welcome wizard once, then help.
 _GUI_FLAGS = {
     "-t", "--toggle", "--show", "--hide", "-s", "--settings",
     "-q", "--quit", "--autostart", "--alert", "--orb", "--launch-ui",
 }
+
+# UI ids routed directly to the GTK app (never through a plugin), so that
+# `sayri ui default` (with default_ui = "desktop") and the legacy orb both work.
+_GTK_UI_IDS = {"orb", "desktop", "sayri-desktop", "sayri-ui-desktop", "default", "", "legacy"}
 
 
 def _run_cli(args: list[str]) -> int:
@@ -108,25 +113,31 @@ def _ensure_daemon() -> None:
     import os
     import subprocess
     import sys
-    from . import paths
+    from . import paths, sysinfo
     log = os.path.join(paths.state_dir(), "daemon.log")
     os.makedirs(os.path.dirname(log), exist_ok=True)
     with open(log, "ab", buffering=0) as f:
         subprocess.Popen(
             [sys.executable, "-c", "import sys; from sayri.daemon import main; sys.exit(main())"],
             stdin=subprocess.DEVNULL, stdout=f, stderr=f,
-            start_new_session=True, close_fds=True,
+            close_fds=True, **sysinfo.spawn_flags(),
         )
 
 
 def _run_launch_ui(argv: list[str]) -> int:
-    """Launch the configured default UI (ui.default_ui), daemon first."""
+    """Launch the configured default UI (ui.default_ui), daemon first.
+
+    The Sayri desktop UI itself is a plugin (sayri-ui-desktop); its gateway
+    simply re-executes this entry with --launch-ui. To avoid an infinite loop
+    this function maps the built-in ids straight to the GTK app and only
+    defers to the plugin machinery for other UI ids.
+    """
     try:
         from . import config as cfg
         default_ui = cfg.config.get_string("ui", "default_ui").strip()
     except Exception:  # noqa: BLE001
-        default_ui = "orb"
-    if not default_ui or default_ui == "orb":
+        default_ui = "desktop"
+    if not default_ui or default_ui in _GTK_UI_IDS:
         _ensure_daemon()
         return _run_gui(argv)
     from .cli import _ensure_daemon as cli_ensure
@@ -138,8 +149,8 @@ def _entry() -> int:
     first = sys.argv[1] if len(sys.argv) > 1 else ""
     if first in ("--launch-ui", "-lu"):
         return _run_launch_ui(sys.argv[1:])
-    if not first:  # nothing → launch the GUI as always
-        return _run_gui(sys.argv[1:])
+    if not first:  # nothing → CLI default: welcome wizard once, then help
+        return _run_cli([])
     if first in _GUI_FLAGS or first.startswith("-"):
         return _run_gui(sys.argv[1:])
     return _run_cli(sys.argv[1:])

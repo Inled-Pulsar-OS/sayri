@@ -11,9 +11,11 @@ developed/run without installing (see the wrapper script in usr/bin/sayri):
 import os
 from typing import Optional
 
-DEFAULT_DATA_DIR = "/usr/share/sayri/web"
-DEFAULT_CONFIG_DIR = "~/.config/sayri"
-DEFAULT_STATE_DIR = "~/.local/share/sayri"
+from . import sysinfo
+
+DEFAULT_DATA_DIR = sysinfo.default_data_dir()
+DEFAULT_CONFIG_DIR = sysinfo.default_config_dir()
+DEFAULT_STATE_DIR = sysinfo.default_state_dir()
 
 
 def _env(name: str, default: str) -> str:
@@ -90,6 +92,11 @@ def plugins_dir() -> str:
     return os.path.join(config_dir(), "plugins")
 
 
+def shared_plugins_dir() -> str:
+    """System-wide plugin directory (/usr/share/sayri/plugins on Linux)."""
+    return os.path.join(sysinfo.shared_root_dir(), "plugins")
+
+
 def triggers_dir() -> str:
     return os.path.join(config_dir(), "triggers")
 
@@ -116,7 +123,7 @@ def find_sound(name: str) -> Optional[str]:
         os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "sounds")),
         os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")),
         os.path.join(data_dir(), "sounds"),
-        "/usr/share/sayri/sounds",
+        os.path.join(sysinfo.shared_root_dir(), "sounds"),
     ):
         for ext in (".mp3", ".wav", ".ogg"):
             candidate = os.path.join(base, f"{name}{ext}")

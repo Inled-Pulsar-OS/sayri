@@ -39,11 +39,17 @@ def test_rms_mixed():
 
 
 def test_mic_command_selection():
+    from sayri import sysinfo
+
     cmd = audio.mic_command()
-    # Either pipewire/pulseaudio is present and gives a command, or we accept None.
-    if cmd is not None:
+    # A command is expected when a supported capture tool exists on this OS.
+    if cmd is None:
+        return
+    if sysinfo.is_linux():
         assert cmd[0] in ("pw-record", "parec")
-        assert "--raw" in cmd or "--raw" in " ".join(cmd)
+        assert "--raw" in " ".join(cmd)
+    else:
+        assert cmd[0] in ("ffmpeg", "sox"), f"unexpected capture command: {cmd[0]}"
 
 
 def test_missing_whisper_binary():

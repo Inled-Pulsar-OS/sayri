@@ -34,7 +34,6 @@ import os
 import random
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -42,6 +41,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .ipc import SayriClient, SayriError, daemon_is_running
+from . import sysinfo
 
 
 # --------------------------------------------------------------------------- I/O
@@ -59,8 +59,8 @@ def _ensure_daemon(wait_s: float = 4.0) -> bool:
             stdin=subprocess.DEVNULL,
             stdout=log_fd,
             stderr=log_fd,
-            start_new_session=True,
             close_fds=True,
+            **sysinfo.spawn_flags(),
         )
     deadline = time.time() + wait_s
     while time.time() < deadline:
@@ -275,23 +275,23 @@ def cmd_help(pairs: dict, rest: list[str]) -> int:
             if c.name == canonical:
                 _print_cmd_help(c)
                 return 0
-    print("Sayri CLI — texto plano, sin flags. ``sayri <comando>``")
+    print("Sayri CLI — plain words, no flags. ``sayri <command>``")
     print()
-    print("Manos libres / runtime:")
-    print("  sayri status                 estado del core, proveedor y sesión")
-    print("  sayri talk <texto>           enviar texto (async, responde con TTS)")
-    print("  sayri ask <texto>            preguntar y esperar respuesta completa")
-    print("  sayri listen [timeout S]     transcribir la siguiente frase")
-    print("  sayri toggle                 activa/desactiva el micrófono")
-    print("  sayri stop                   dejar de escuchar")
-    print("  sayri interrupt              cortar TTS/generación")
-    print("  sayri new                    nueva conversación")
+    print("Hands-free / runtime:")
+    print("  sayri status                 core, provider and session status")
+    print("  sayri talk <text>            send text (async, replies with TTS)")
+    print("  sayri ask <text>             ask and wait for the full reply")
+    print("  sayri listen [timeout S]     transcribe the next phrase")
+    print("  sayri toggle                 toggle the microphone")
+    print("  sayri stop                   stop listening")
+    print("  sayri interrupt              cancel TTS / generation")
+    print("  sayri new                    new conversation")
     print("  sayri sessions ...           list|switch|rename|delete|show")
     print("  sayri agents ...             list|create|edit|use|delete|show")
-    print("  sayri daemon [start|stop|status]    (start = en segundo plano)")
-    print("  sayri ui [start|stop|status]         lanza la UI predeterminada")
+    print("  sayri daemon [start|stop|status]    (start = run in background)")
+    print("  sayri ui [default|<name>] [start|stop|status]   launch the default UI")
     print()
-    print("Gestión:")
+    print("Manage:")
     print("  sayri config ...             get|set|list")
     print("  sayri vault ...              list|add|get|delete")
     print("  sayri skills ...             list|search|install|read|remove")
@@ -300,21 +300,42 @@ def cmd_help(pairs: dict, rest: list[str]) -> int:
     print("  sayri routines ...           list|create|edit|toggle|run|delete|show")
     print("  sayri downloads ...          status|model|voice|whisper|piper")
     print()
-    print("Sistema:")
-    print("  sayri orb [start|stop|status]   UI plugin (orb GTK4)")
-    print("  sayri version")
-    print("  sayri help [tema]               esta ayuda")
-    print("  sayri killall                    termina todos los procesos Sayri")
+    print("Setup:")
+    print("  sayri welcome                one-minute setup wizard (CLI)")
+    print("  sayri ui default             open the Sayri desktop UI")
     print()
-    print("Valores: ``clave=valor`` o ``tag valor`` en cualquier orden.")
-    print("Ejemplo:  sayri vault add key=API_KEY value=sk-1234")
+    print("System:")
+    print("  sayri orb [start|stop|status]   legacy orb UI plugin (deprecated)")
+    print("  sayri version")
+    print("  sayri help [topic]              this help")
+    print("  sayri killall                   terminate all Sayri processes")
+    print()
+    print("Values: ``key=value`` or ``tag value`` in any order.")
+    print("Example:  sayri vault add key=API_KEY value=sk-1234")
     return 0
+
+
+def setup_pending() -> bool:
+    """True on a fresh setup: the welcome wizard should run before the CLI."""
+    try:
+        from . import config as cfg
+        return not bool(cfg.config.get_bool("ui", "setup_complete"))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def cmd_default(pairs: dict, rest: list[str]) -> int:
+    """Bare ``sayri``: run the welcome wizard once, then the CLI help."""
+    if setup_pending():
+        from . import wizard
+        return wizard.run_cli()
+    return cmd_help({}, [])
 
 
 def _print_cmd_help(cmd: _Cmd) -> None:
     print(f"sayri {cmd.name} — {cmd.help}")
     if cmd.actions:
-        print("  acciones: " + ", ".join(sorted(cmd.actions)))
+        print("  actions: " + ", ".join(sorted(cmd.actions)))
 
 
 def cmd_daemon(pairs: dict, rest: list[str]) -> int:
@@ -339,7 +360,7 @@ def cmd_daemon(pairs: dict, rest: list[str]) -> int:
         print("running" if daemon_is_running() else "not running")
         return 0
     if action == "restart":
-        subprocess.Popen(["pkill", "-f", "sayri.daemon|python3 -m sayri daemon"])
+        sysinfo.kill_process_tree(pattern=r"sayri\.daemon|^python3 -m sayri daemon$")
         time.sleep(0.5)
     if daemon_is_running():
         print("daemon already running")
@@ -766,11 +787,37 @@ def cmd_plugins(pairs: dict, rest: list[str]) -> int:
 
     action, rest = _pick_action(rest, {
         "config": {"config", "edit", "editar", "configure", "configurar", "allow", "permisos", "set", "arandela"},
+        "settings": {"settings", "ajustes", "ajustar", "setup", "preferencias"},
         "show": {"show", "info", "ver", "details", "detalles"},
         "list": {"list", "ls", "mostrar", "all"},
     }, "list")
     supervisor = GatewaySupervisor.get_instance()
     plugins = supervisor.list_installed_plugins()
+    if action == "settings":
+        from sayri import plugin_settings
+        pid = rest[0] if rest else pairs.get("id", "")
+        pl = _find_plugin(supervisor, pid) if pid else None
+        if not pl or not pl.get("path"):
+            print(f"plugin not found: {pid}", file=sys.stderr)
+            return 1
+        dirpath = Path(pl["path"])
+        mpath = dirpath if dirpath.is_file() else dirpath / "manifest.json"
+        if not mpath.is_file():
+            print(f"no manifest.json at {mpath}", file=sys.stderr)
+            return 1
+        try:
+            data = _json.loads(mpath.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"could not read manifest: {exc}", file=sys.stderr)
+            return 1
+        if plugin_settings.settings_schema(data):
+            return plugin_settings.run_settings_tui(data, title=data.get("name", ""))
+        flow = (data.get("ui") or {}).get("flow_command")
+        if flow:
+            print(f"running plugin flow: {flow}")
+            return subprocess.call(flow, shell=True, cwd=str(dirpath))
+        print("no declarative settings for this plugin", file=sys.stderr)
+        return 1
     if action == "show":
         pid = rest[0] if rest else pairs.get("id", "")
         pl = None
@@ -816,7 +863,9 @@ def cmd_plugins(pairs: dict, rest: list[str]) -> int:
             data["allow_in_level_0"] = pairs["level0"].lower() in ("1", "yes", "true", "on", "si")
             changed.append(f"allow_in_level_0={data['allow_in_level_0']}")
         if not changed:
-            print("nada que configurar. usa: sayri plugins config <id> level 3 [level0 yes|no]")
+            print("nada que configurar. usa:")
+            print("  sayri plugins config <id> level 3 [level0 yes|no]   (sandbox)")
+            print("  sayri plugins settings <id>                          (ajustes del plugin)")
             return 0
         try:
             manifest_path.write_text(_json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -843,7 +892,15 @@ def cmd_plugins(pairs: dict, rest: list[str]) -> int:
         print(f"applied: {', '.join(changed)}")
         return 0
     for p in plugins:
-        print(f"{p.get('id')} — {p.get('description', p.get('name', ''))} (v{p.get('version', '?')})")
+        marker = ""
+        try:
+            from sayri import plugin_settings as _ps
+            pm = _json.loads((Path(p["path"]) / "manifest.json").read_text(encoding="utf-8"))
+            if _ps.settings_schema(pm):
+                marker = "  [settings]"
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"{p.get('id')} — {p.get('description', p.get('name', ''))} (v{p.get('version', '?')}){marker}")
     return 0
 
 
@@ -910,7 +967,8 @@ def cmd_gateway(pairs: dict, rest: list[str]) -> int:
             print(f"gateway instance not found: {iid}", file=sys.stderr)
             return 1
         pin = f"{random.randint(100000, 999999)}"
-        pin_file = Path.home() / ".config" / "sayri" / f"pairing_pin_{iid}.json"
+        from . import paths as _paths
+        pin_file = Path(_paths.config_dir()) / f"pairing_pin_{iid}.json"
         pin_file.write_text(json.dumps({
             "pin": pin,
             "created_at": time.time(),
@@ -1370,22 +1428,23 @@ def cmd_orb(pairs: dict, rest: list[str]) -> int:
         "start": {"start", "launch", "arranca", "iniciar", "abrir", "open"},
     }, "start")
     orb_gateway = Path(__file__).resolve().parent.parent.parent.parent.parent.parent.parent.parent / "packages" / "plugins" / "sayri-orb" / "gateway.py"
+    from . import paths as _paths
     if not orb_gateway.is_file():
         for candidate in (
-            Path.home() / ".config" / "sayri" / "plugins" / "sayri-orb" / "gateway.py",
-            Path("/usr/share/sayri/plugins") / "sayri-orb" / "gateway.py",
+            Path(_paths.plugins_dir()) / "sayri-orb" / "gateway.py",
+            Path(_paths.shared_plugins_dir()) / "sayri-orb" / "gateway.py",
         ):
             if candidate.is_file():
                 orb_gateway = candidate
                 break
-    state_dir = Path(os.environ.get("SAYRI_STATE_DIR") or str(Path.home() / ".local" / "share" / "sayri"))
-    pid_file = state_dir / "orb.pid"
+    state_dir = _paths.state_dir()
+    pid_file = Path(state_dir) / "orb.pid"
 
     if action == "stop":
         if pid_file.is_file():
             try:
                 pid = int(pid_file.read_text().strip())
-                os.kill(pid, signal.SIGTERM)
+                sysinfo.terminate_pid(pid)
                 print(f"stopped orb (pid {pid})")
             except (OSError, ValueError):
                 print("orb was not running")
@@ -1402,8 +1461,8 @@ def cmd_orb(pairs: dict, rest: list[str]) -> int:
         if pid_file.is_file():
             try:
                 pid = int(pid_file.read_text().strip())
-                os.kill(pid, 0)
-                print(f"orb running (pid {pid})")
+                alive = sysinfo.process_alive(pid)
+                print(f"orb running (pid {pid})" if alive else "orb pid file exists but process is dead")
             except (OSError, ValueError):
                 print("orb pid file exists but process is dead")
         else:
@@ -1419,9 +1478,9 @@ def cmd_orb(pairs: dict, rest: list[str]) -> int:
         return 1
     proc = subprocess.Popen(
         [sys.executable, str(orb_gateway)],
-        start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        **sysinfo.spawn_flags(),
     )
     print(f"orb started (pid {proc.pid})")
     return 0
@@ -1432,10 +1491,11 @@ def _is_ui_plugin(data: dict) -> bool:
 
 
 def _ui_plugin_gateway(ui_id: str) -> Optional[Path]:
-    """Find a UI-type plugin gateway by id (user config dir first, then /usr)."""
+    """Find a UI-type plugin gateway by id (user config dir first, then system)."""
+    from . import paths as _paths
     roots = [
-        Path.home() / ".config" / "sayri" / "plugins",
-        Path("/usr/share/sayri/plugins"),
+        Path(_paths.plugins_dir()),
+        Path(_paths.shared_plugins_dir()),
     ]
     for root in roots:
         if not root.is_dir():
@@ -1452,35 +1512,48 @@ def _ui_plugin_gateway(ui_id: str) -> Optional[Path]:
     return None
 
 
-def cmd_ui(pairs: dict, rest: list[str]) -> int:
-    """Launch/stop/query the configured default UI (ui.default_ui)."""
-    from sayri import config as cfg
+def _ui_resolve_default() -> str:
+    """Resolve the effective default UI id from ui.default_ui (desktop fallback)."""
+    try:
+        from sayri import config as cfg
+        value = (cfg.config.get_string("ui", "default_ui") or "desktop").strip()
+    except Exception:  # noqa: BLE001
+        return "desktop"
+    if value in ("default", "predeterminada", ""):
+        return "desktop"
+    return value
 
+
+def cmd_ui(pairs: dict, rest: list[str]) -> int:
+    """Launch/stop/query the desktop UI, exposed as a plugin.
+
+    ``sayri ui`` / ``sayri ui default``            start the default UI plugin
+    ``sayri ui <name> [start]``                    start that UI plugin
+    ``sayri ui <name> stop|status``                stop / query it
+    """
     action, rest = _pick_action(rest, {
         "start": {"start", "launch", "abrir", "open", "iniciar", "arranca", "show", "mostrar"},
         "stop": {"stop", "parar", "cerrar", "quit", "quitar", "close"},
         "status": {"status", "estado", "check", "running"},
-    }, "status")
+    }, "start")
     ui_id = pairs.get("ui") or pairs.get("id") or (rest[0] if rest else "")
-    if not ui_id:
-        try:
-            ui_id = (cfg.config.get_string("ui", "default_ui") or "orb").strip()
-        except Exception:  # noqa: BLE001
-            ui_id = "orb"
+    if not ui_id or ui_id in ("default", "predeterminada"):
+        ui_id = _ui_resolve_default()
     if action == "status":
         print(f"default_ui = {ui_id}  daemon={'running' if daemon_is_running() else 'stopped'}")
         return 0
-    if ui_id in ("orb", ""):
+    if ui_id in ("orb", "", "legacy"):
+        # legacy built-in GTK UI path (kept for backward compatibility)
         if action == "stop":
-            subprocess.Popen(["pkill", "-f", "python3 -m sayri --launch-ui"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            sysinfo.kill_process_tree(pattern="python3 -m sayri --launch-ui")
             print("orb ui: stop requested")
             return 0
         _ensure_daemon()
         proc = subprocess.Popen(
             [sys.executable, "-m", "sayri", "--launch-ui"],
-            start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            **sysinfo.spawn_flags(),
         )
         print(f"orb ui launching (pid {proc.pid}, daemon running)")
         return 0
@@ -1489,10 +1562,11 @@ def cmd_ui(pairs: dict, rest: list[str]) -> int:
         print(f"UI plugin not found: {ui_id}  (configured in ui.default_ui)", file=sys.stderr)
         return 1
     if action == "stop":
-        pid_file = Path(os.environ.get("SAYRI_STATE_DIR") or str(Path.home() / ".local" / "share" / "sayri")) / f"{ui_id}.pid"
+        from . import paths as _paths
+        pid_file = Path(_paths.state_dir()) / f"{ui_id}.pid"
         if pid_file.is_file():
             try:
-                os.kill(int(pid_file.read_text().strip()), signal.SIGTERM)
+                sysinfo.terminate_pid(int(pid_file.read_text().strip()))
                 print(f"stopped ui {ui_id}")
             except (OSError, ValueError):
                 print(f"ui {ui_id} was not running")
@@ -1505,9 +1579,9 @@ def cmd_ui(pairs: dict, rest: list[str]) -> int:
     _ensure_daemon()
     proc = subprocess.Popen(
         [sys.executable, str(gateway)],
-        start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        **sysinfo.spawn_flags(),
     )
     print(f"ui plugin {ui_id} started (pid {proc.pid})")
     return 0
@@ -1515,9 +1589,15 @@ def cmd_ui(pairs: dict, rest: list[str]) -> int:
 
 def cmd_killall(pairs: dict, rest: list[str]) -> int:
     for pat in ("gateway.py", "sayri.indicator", "python3 -m sayri"):
-        subprocess.Popen(["pkill", "-9", "-f", pat], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sysinfo.kill_process_tree(pattern=pat)
     print("terminated all Sayri processes ✓")
     return 0
+
+
+def cmd_welcome(pairs: dict, rest: list[str]) -> int:
+    """One-minute setup wizard (shared with the GUI, see sayri/wizard.py)."""
+    from . import wizard
+    return wizard.run_cli()
 
 
 # ------------------------------------------------------------------ registry
@@ -1601,6 +1681,8 @@ _COMMANDS: list[_Cmd] = [
              "piper": {"piper", "piper-bin", "piper_bin"},
              "status": {"status", "estado"},
          }, "status"),
+    _Cmd("welcome", 90, {"welcome", "bienvenida", "setup", "configurar", "onboarding", "inicio"},
+         cmd_welcome, "Asistente de configuración en un minuto (idioma, IA, voz, STT).", None, "start"),
     _Cmd("config", 90, {"config", "settings", "ajustes", "configuracion", "preferencias"},
          cmd_config, "Configuración: list|get|set.",
          {
@@ -1641,11 +1723,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     raw = list(argv) if argv is not None else sys.argv[1:]
     tokens = _normalize(raw)
     if not tokens:
-        return cmd_help({}, [])
+        return cmd_default({}, [])
     pairs, rest = _extract_pairs(tokens)
     matched = _match_command(rest)
     if matched is None:
-        print(f"no entiendo: {' '.join(raw)}  — prueba 'sayri help'", file=sys.stderr)
+        print(f"Sorry, I don't understand: {' '.join(raw)}  — try 'sayri help'", file=sys.stderr)
         return 2
     cmd, meta, cleaned = matched
     try:
