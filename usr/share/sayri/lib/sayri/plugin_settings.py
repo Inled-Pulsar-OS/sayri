@@ -20,6 +20,25 @@ from . import paths, xui
 EDITABLE = ("entry", "select", "check")
 
 
+def _service_block(manifest: dict) -> Optional[dict]:
+    svc = manifest.get("service")
+    if isinstance(svc, dict) and (svc.get("start") or svc.get("status")):
+        return svc
+    return None
+
+
+def _enabled_key(svc: dict) -> str:
+    return str(svc.get("enabled_key") or "enabled")
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ("1", "true", "yes", "on", "si")
+
+
 def settings_schema(manifest: dict) -> Optional[dict]:
     """Return the manifest ``ui`` block if it declares an editable form.
 
@@ -136,6 +155,8 @@ class SettingsApp:
         self.values = read_values(manifest)
         self._done = False
         self._last_error: Optional[str] = None
+        self._last_service_note: Optional[str] = None
+        self._last_service_ok = True
 
     # ------------------------------------------------------------- screens
     def render(self) -> Optional[dict]:
@@ -143,6 +164,8 @@ class SettingsApp:
             body = [xui.text("Settings saved ✓", accent=True),
                     xui.note("Restart the gateway/plugin if it needs to re-read the config.",
                              "info")]
+            if self._last_service_note:
+                body.append(xui.note(self._last_service_note, "ok" if self._last_service_ok else "warn"))
             footer = [xui.button("quit", "Close", kind="primary")]
             return xui.screen(f"{self.title} — settings", body, id="done",
                               done=True, footer=footer)
@@ -152,6 +175,15 @@ class SettingsApp:
             body.append(xui.text(f"Config file: {settings_file_path(self.manifest)}", dim=True))
         if sync:
             body.append(xui.note(sync, "info"))
+        svc = _service_block(self.manifest)
+        if svc:
+            key = _enabled_key(svc)
+            body.append(xui.check(
+                key, svc.get("enabled_label") or "Run this service when Sayri starts",
+                default=_as_bool(self.values.get(
+                    key,
+                    svc.get("enabled", svc.get("auto_start", True))))))
+            body.append(xui.text("Saving toggles the service on/off right away.", dim=True))
         for n in self.ui.get("settings", []):
             body.append(_widget_display(n, self.values))
         footer = [xui.button("save", "Save", kind="primary"),
@@ -190,6 +222,28 @@ class SettingsApp:
                 v = str(v)
             if write_setting(self.manifest, key, v):
                 written.append(key)
+
+        svc = _service_block(self.manifest)
+        if svc:
+            skey = _enabled_key(svc)
+            before = _as_bool(self.values.get(
+                skey, svc.get("enabled", svc.get("auto_start", True))))
+            if skey in value and _as_bool(value[skey]) != before:
+                write_setting(self.manifest, skey, bool(value[skey]))
+                self.values = read_values(self.manifest)
+                after = _as_bool(self.values.get(skey, False))
+                if after:
+                    from . import plugin_service as _psvc
+                    ok, msg = _psvc.start_service(self.manifest)
+                    self._last_service_ok = ok
+                    self._last_service_note = f"Service started: {msg}" if ok else f"Service start failed: {msg}"
+                else:
+                    from . import plugin_service as _psvc
+                    ok, msg = _psvc.stop_service(self.manifest)
+                    self._last_service_ok = ok
+                    self._last_service_note = f"Service stopped: {msg}" if ok else f"Service stop failed: {msg}"
+            elif skey in value:
+                self.values = read_values(self.manifest)
         if written:
             self.values = read_values(self.manifest)
             self._done = True

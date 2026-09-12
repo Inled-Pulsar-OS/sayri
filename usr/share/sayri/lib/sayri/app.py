@@ -222,6 +222,12 @@ class SayriApp(Gtk.Application):
         except Exception as e:
             print(f"[Sayri] Gateway supervisor auto-start notice: {e}")
 
+        try:
+            from sayri import plugin_service
+            plugin_service.auto_start_services()
+        except Exception as e:
+            print(f"[Sayri] Plugin service auto-start notice: {e}")
+
         # Auto-start cron and automated routines
         try:
             from sayri.domain.cron_scheduler import cron_scheduler

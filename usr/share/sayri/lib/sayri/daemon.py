@@ -486,6 +486,11 @@ class SayriDaemon:
                 gateway_supervisor.auto_start_all()
             except Exception as exc:  # noqa: BLE001
                 print(f"[sayri-daemon] gateway auto-start notice: {exc}")
+            try:
+                from sayri import plugin_service
+                plugin_service.auto_start_services()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[sayri-daemon] plugin service auto-start notice: {exc}")
 
         try:
             cron_scheduler.app = self.core

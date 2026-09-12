@@ -1812,6 +1812,56 @@ class SayriCajita(Gtk.Box):
         btn_run.connect("clicked", _run)
         box.append(btn_run)
 
+        # ── Service controls (manifest "service" block): auto-start + start/stop ──
+        svc = None
+        if manifest:
+            try:
+                from sayri import plugin_service as _psvc
+                svc = _psvc.service_block(manifest)
+            except Exception:  # noqa: BLE001
+                svc = None
+        if svc:
+            sw_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            sw_lbl = Gtk.Label()
+            sw_lbl.set_halign(Gtk.Align.START)
+            sw_lbl.set_hexpand(True)
+            sw_lbl.set_wrap(True)
+            sw_lbl.set_markup("<span size='9000' foreground='#cbd5e1'>Auto-start this server when Sayri starts</span>")
+            sw = Gtk.Switch()
+            sw.set_active(_psvc.service_enabled(manifest))
+            sw_row.append(sw_lbl)
+            sw_row.append(sw)
+            box.append(sw_row)
+
+            def _toggle_service(on: bool) -> None:
+                def work() -> None:
+                    try:
+                        if on:
+                            _psvc.start_service(manifest)
+                        else:
+                            _psvc.stop_service(manifest)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[sayri] plugin service toggle error: {exc}")
+                    GLib.idle_add(_refresh)
+                threading.Thread(target=work, daemon=True).start()
+
+            def _on_switch(_sw, state):
+                _psvc.set_service_enabled(manifest, bool(state))
+                _toggle_service(bool(state))
+                return True  # handled
+
+            sw.connect("state-set", _on_switch)
+
+            btn_start = Gtk.Button(label="Start server")
+            btn_start.add_css_class("sayri-action-btn")
+            btn_start.connect("clicked", lambda _b: _toggle_service(True))
+            box.append(btn_start)
+
+            btn_stop = Gtk.Button(label="Stop server")
+            btn_stop.add_css_class("sayri-action-btn")
+            btn_stop.connect("clicked", lambda _b: _toggle_service(False))
+            box.append(btn_stop)
+
         _refresh()
 
     def show_edit_plugin_view(self, plugin_data: dict) -> None:

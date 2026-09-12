@@ -788,6 +788,10 @@ def cmd_plugins(pairs: dict, rest: list[str]) -> int:
     action, rest = _pick_action(rest, {
         "config": {"config", "edit", "editar", "configure", "configurar", "allow", "permisos", "set", "arandela"},
         "settings": {"settings", "ajustes", "ajustar", "setup", "preferencias"},
+        "status": {"status", "estado", "running"},
+        "start": {"start", "arrancar", "iniciar", "encender"},
+        "stop": {"stop", "parar", "apagar", "detener"},
+        "restart": {"restart", "reiniciar", "reset"},
         "show": {"show", "info", "ver", "details", "detalles"},
         "list": {"list", "ls", "mostrar", "all"},
     }, "list")
@@ -818,6 +822,47 @@ def cmd_plugins(pairs: dict, rest: list[str]) -> int:
             return subprocess.call(flow, shell=True, cwd=str(dirpath))
         print("no declarative settings for this plugin", file=sys.stderr)
         return 1
+    if action == "status" or action in ("start", "stop", "restart"):
+        from sayri import plugin_service
+        pid = rest[0] if rest else pairs.get("id", "")
+        pl = _find_plugin(supervisor, pid) if pid else None
+        if not pl or not pl.get("path"):
+            print(f"plugin not found: {pid}", file=sys.stderr)
+            return 1
+        dirpath = Path(pl["path"])
+        mpath = dirpath if dirpath.is_file() else dirpath / "manifest.json"
+        if not mpath.is_file():
+            print(f"no manifest.json at {mpath}", file=sys.stderr)
+            return 1
+        try:
+            data = _json.loads(mpath.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"could not read manifest: {exc}", file=sys.stderr)
+            return 1
+        if not plugin_service.service_block(data):
+            print(f"{pid} has no managed service (set a 'service' block in the manifest)",
+                  file=sys.stderr)
+            return 1
+        if action == "status":
+            enabled = plugin_service.service_enabled(data)
+            running = plugin_service.service_running(data)
+            print(f"{pid}: auto-start={'enabled' if enabled else 'disabled'}  "
+                  f"server={'running' if running else 'stopped'}")
+            _rc, text = plugin_service.run_service_command(data, "status")
+            if text:
+                print(text)
+            return 0
+        if action == "start":
+            ok, msg = plugin_service.start_service(data)
+            print(msg or ("started" if ok else "failed"))
+            return 0 if ok else 1
+        if action == "stop":
+            ok, msg = plugin_service.stop_service(data)
+            print(msg or ("stopped" if ok else "failed"))
+            return 0 if ok else 1
+        ok, msg = plugin_service.restart_service(data)
+        print(msg or ("restarted" if ok else "failed"))
+        return 0 if ok else 1
     if action == "show":
         pid = rest[0] if rest else pairs.get("id", "")
         pl = None
