@@ -3,6 +3,7 @@
 import io
 import os
 import sys
+import time
 
 _TMP = os.path.join(os.path.dirname(__file__), "_wizard_tmp")
 os.environ["SAYRI_CONFIG_DIR"] = os.path.join(_TMP, "config")
@@ -214,6 +215,42 @@ def test_prism_wizard_flow_persists_plugin_config():
     scr = app.dispatch({"type": "submit", "value": {"stt_size": "base", "download_stt": False}})
     assert scr["id"] == "review"
     assert scr["step"] == "10/11"
+
+
+def test_prism_apply_download_launches_task():
+    # "Apply & download" on Prism must start a real download task (binary+model)
+    # and stream its progress, instead of doing nothing.
+    import json as _json
+    plugins = os.path.join(os.environ["SAYRI_CONFIG_DIR"], "plugins")
+    pdir = os.path.join(plugins, "sayri-prismml")
+    os.makedirs(pdir, exist_ok=True)
+    with open(os.path.join(pdir, "manifest.json"), "w", encoding="utf-8") as fh:
+        _json.dump({"id": "sayri-prismml", "entrypoint": "gateway.py"}, fh)
+    fake = (
+        "import sys\n"
+        "sys.stdout.write('\\r 50%')\n"
+        "sys.stdout.flush()\n"
+        "sys.stdout.write('\\nfake download ok\\n')\n"
+        "sys.stdout.flush()\n"
+    )
+    with open(os.path.join(pdir, "gateway.py"), "w", encoding="utf-8") as fh:
+        fh.write(fake)
+
+    app = wizard.WelcomeApp()
+    app.val.update({"provider": "bonsai", "prism_family": "ternary",
+                    "prism_size": "8B", "prism_quant": ""})
+    scr = app.dispatch({"type": "action", "widget": "apply", "value": {}})
+    assert scr["id"] == "busy", scr["id"]
+    for _ in range(200):
+        poll = app.dispatch({"type": "poll"})
+        if not poll.get("busy"):
+            break
+        time.sleep(0.01)
+    info = app.task.poll()
+    assert not info["running"]
+    assert "Everything is downloaded" in "\n".join(info["log"])
+    ok = app.dispatch({"type": "poll"})
+    assert ok.get("busy") is False
 
 
 if __name__ == "__main__":

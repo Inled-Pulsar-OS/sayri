@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -471,6 +472,83 @@ class WelcomeApp:
         self._final = self._done_screen()
         return self._final
 
+    def _task_prism(self, progress: Callable, log: Callable) -> bool:
+        """Download the llama-server binary and the chosen GGUF via the plugin gateway."""
+        gate = self._prism_gateway()
+        if gate is None:
+            log(["Prism ML plugin not found — install it from the Store first."])
+            return False
+        family = self.val.get("prism_family", "ternary")
+        size = self.val.get("prism_size", "8B")
+        quant = self.val.get("prism_quant", "") or ""
+        ok = True
+        log(["Installing llama-server binary…"])
+        ok = self._run_gateway_phase(gate, ["install"], progress, log, 0.0, 0.4) and ok
+        log([f"Downloading model {family}/{size} ({quant or 'auto'})…"])
+        cmd = ["download", family, size]
+        if quant:
+            cmd += ["--quant", quant]
+        ok = self._run_gateway_phase(gate, cmd, progress, log, 0.4, 1.0) and ok
+        if ok:
+            log(["Everything is downloaded ✓"])
+        return ok
+
+    def _prism_gateway(self) -> Optional[Path]:
+        """Locate the Prism ML plugin gateway entrypoint on disk."""
+        try:
+            roots = [Path(paths.plugins_dir()), Path(paths.shared_plugins_dir())]
+        except Exception:  # noqa: BLE001
+            return None
+        for root in roots:
+            for manifest_path in root.glob("*/manifest.json"):
+                try:
+                    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    continue
+                if data.get("id") in ("sayri-prismml", "prismml"):
+                    cand = manifest_path.parent / (data.get("entrypoint") or "gateway.py")
+                    if cand.is_file():
+                        return cand
+        return None
+
+    def _run_gateway_phase(self, gate: Path, args: list, progress: Callable,
+                           log: Callable, lo: float, hi: float) -> bool:
+        """Stream one gateway subcommand, mapping its percent output onto [lo, hi]."""
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(gate)] + list(args),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1)
+        except Exception as exc:  # noqa: BLE001
+            log([f"error: {exc}"])
+            return False
+        buf: list[str] = []
+        pct = 0.0
+        while True:
+            ch = proc.stdout.read(1)  # type: ignore[union-attr]
+            if not ch:
+                break
+            if ch in "\r\n":
+                line = "".join(buf)
+                buf.clear()
+                s = line.strip()
+                if not s:
+                    continue
+                m = re.findall(r"(\d{1,3})\s*%", s)
+                if m:
+                    pct = float(int(m[-1])) / 100.0
+                    progress(lo + (hi - lo) * pct)
+                else:
+                    log([s])
+            else:
+                buf.append(ch)
+        rc = proc.wait()
+        return rc == 0
+
+    def _prism_ready(self) -> bool:
+        det = self._prism_detection()
+        return bool(det["binary_ok"] and det["model_ok"])
+
     # ------------------------------------------------------------ dispatch
     def dispatch(self, event: dict) -> Optional[dict]:
         t = event.get("type")
@@ -544,6 +622,9 @@ class WelcomeApp:
             return self._finalize_done()
         if wid == "apply":
             self._apply_config()
+            if self._is_prism() and not self._prism_ready():
+                self._launch_task("Prism ML — downloading binaries & model…", self._task_prism, lambda _r: None)
+                return self._progress_screen()
             if self._start_pending_downloads():
                 return self._progress_screen()
             return self.render()

@@ -1710,14 +1710,19 @@ class SayriCajita(Gtk.Box):
 
             def apply_line(line: str, pct: Optional[int]) -> None:
                 if "llama-server running" in line or "health:" in line:
-                    prog.set_visible(False)
+                    prog.set_visible(True)
+                    prog.set_fraction(1.0)
                     run_lbl.set_markup(
                         f"<span size='8000' foreground='#86efac'>Server running ✓ — {GLib.markup_escape_text(line[-60:])}</span>")
-                elif pct is not None:
+                else:
                     prog.set_visible(True)
-                    prog.set_fraction(min(1.0, pct / 100.0))
-                    run_lbl.set_markup(
-                        f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
+                    if pct is not None:
+                        prog.set_fraction(min(1.0, pct / 100.0))
+                        run_lbl.set_markup(
+                            f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
+                    elif not line.startswith("health:"):
+                        run_lbl.set_markup(
+                            f"<span size='8000' foreground='#e2e8f0'>{GLib.markup_escape_text(line[-90:])}</span>")
 
             def _poll_status() -> bool:
                 if not running[0]:
@@ -1753,7 +1758,6 @@ class SayriCajita(Gtk.Box):
                     running[0] = False
                     if poll_id[0] is not None:
                         GLib.idle_add(lambda: GLib.source_remove(poll_id[0]))
-                    GLib.idle_add(prog.set_visible, False)
                     GLib.idle_add(_refresh)
 
             threading.Thread(target=work, daemon=True).start()
