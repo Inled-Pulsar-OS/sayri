@@ -265,12 +265,19 @@ class WelcomeApp:
         quant = self.val.get("prism_quant", "") or ""
         root = Path(os.environ.get("PRISM_ROOT") or os.path.join(paths.state_dir(), "prismml"))
         binary = Path(root) / "bins" / "llama-server"
-        name = f"{family}-{size}-{quant}.gguf" if quant else f"{family}-{size}.gguf"
-        model = Path(root) / "models" / name
         auto_quant = PRISM_DEFAULT_QUANT.get(family, "pq2_0")
+        models_dir = Path(root) / "models"
+        name = f"{family}-{size}-{quant}.gguf" if quant else f"{family}-{size}.gguf"
+        model = models_dir / name
+        model_ok = model.is_file()
+        if not model_ok:  # any previously downloaded file for this family/size counts
+            try:
+                model_ok = any(p.is_file() for p in models_dir.glob(f"{family}-{size}*.gguf")) if models_dir.is_dir() else False
+            except Exception:  # noqa: BLE001
+                model_ok = False
         return {
             "binary_ok": binary.is_file() and os.access(binary, os.X_OK),
-            "model_ok": model.is_file(),
+            "model_ok": model_ok,
             "binary": binary,
             "model": model,
             "quant_display": (quant or auto_quant).upper(),

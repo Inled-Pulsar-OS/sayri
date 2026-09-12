@@ -1208,6 +1208,43 @@ class SayriCajita(Gtk.Box):
 
         self.card_stack.add_named(self.subview_box, "subview")
 
+        # ── View 12: Setup wizard embedded (native GTK, xui screens) ──
+        self.wizard_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        wiz_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        wiz_hdr.set_valign(Gtk.Align.CENTER)
+
+        self.wizard_back_btn = Gtk.Button()
+        self.wizard_back_btn.set_child(_svg_icon(SVG_BACK))
+        self.wizard_back_btn.set_has_frame(False)
+        self.wizard_back_btn.add_css_class("sayri-icon-btn")
+        self.wizard_back_btn.set_tooltip_text("Back")
+        self.wizard_back_btn.connect("clicked", lambda _b: self._back_from_wizard())
+        wiz_hdr.append(self.wizard_back_btn)
+
+        wiz_title = Gtk.Label()
+        wiz_title.set_markup("<span weight='700' size='10500' foreground='#f8fafc'>SETUP WIZARD</span>")
+        wiz_title.set_halign(Gtk.Align.START)
+        wiz_title.set_hexpand(True)
+        wiz_hdr.append(wiz_title)
+        self.wizard_box.append(wiz_hdr)
+
+        self.wizard_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.wizard_body.set_size_request(400, -1)
+        wizard_scroll = Gtk.ScrolledWindow()
+        wizard_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        wizard_scroll.set_vexpand(True)
+        wizard_scroll.set_child(self.wizard_body)
+        self.wizard_box.append(wizard_scroll)
+        self._wizard_host: Any = None
+        self._wizard_values: dict = {}
+        self._wizard_entries: dict = {}
+        self._wizard_checks: dict = {}
+        self._wizard_selects: dict = {}
+        self._wizard_polling = False
+        self._wizard_progress_bar: Any = None
+
+        self.card_stack.add_named(self.wizard_box, "wizard")
+
         card_content.append(self.card_stack)
         self.card_overlay.add_overlay(card_content)
         self.card_overlay.set_measure_overlay(card_content, True)
@@ -1218,7 +1255,7 @@ class SayriCajita(Gtk.Box):
 
     def switch_tab(self, tab_id: str, trigger_effect: bool = True) -> None:
         """Switch between views inside the response card."""
-        is_subview = tab_id in ("subview", "thread")
+        is_subview = tab_id in ("subview", "thread", "wizard")
         self.tab_bar.set_visible(not is_subview)
         for tid, btn in self._tab_btns.items():
             if tid == tab_id:
@@ -1242,6 +1279,8 @@ class SayriCajita(Gtk.Box):
             self._populate_secrets()
         elif tab_id == "settings":
             self._populate_settings()
+        elif tab_id == "wizard":
+            self.open_wizard_view()
 
         self.card_stack.set_visible_child_name(tab_id)
         if trigger_effect:
@@ -1933,6 +1972,255 @@ class SayriCajita(Gtk.Box):
 
         self.open_subview(f"Configure {plugin_data.get('name', 'Plugin')}", _builder, on_back_tab="plugins")
 
+    # ── In-Cajita setup wizard (native GTK, renders the xui screen documents
+    #    with the Cajita's own design — no HTML/WebKit) ──
+    def open_wizard_view(self) -> None:
+        """Render the welcome wizard (provider · Prism ML · voice · STT) inside
+        the Cajita using native GTK widgets fed by the shared WelcomeApp host."""
+        try:
+            from sayri import wizard as wizard_mod
+        except Exception as exc:  # noqa: BLE001
+            self._wizard_log(f"Wizard unavailable: {exc}")
+            return
+        self._free_wizard()
+        host = wizard_mod.WelcomeApp()
+        self._wizard_host = host
+        self._wizard_values: dict = {}
+        self._wizard_entries: dict = {}
+        self._wizard_checks: dict = {}
+        self._wizard_selects: dict = {}
+        self._wizard_polling = False
+        self._wizard_render(host.render())
+
+    def _wizard_render(self, scr: Optional[dict]) -> None:
+        if scr is None:  # wizard finished → back to the plugin area
+            self._free_wizard()
+            self.switch_tab("plugins")
+            return
+        self._wizard_entries = {}
+        self._wizard_checks = {}
+        self._wizard_selects = {}
+        while True:
+            child = self.wizard_body.get_first_child()
+            if not child:
+                break
+            self.wizard_body.remove(child)
+
+        if scr.get("step"):
+            step_lbl = Gtk.Label()
+            step_lbl.set_markup(f"<span size='8000' weight='600' foreground='#94a3b8'>{GLib.markup_escape_text(scr.get('step', ''))}</span>")
+            step_lbl.set_halign(Gtk.Align.START)
+            self.wizard_body.append(step_lbl)
+
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup(f"<span size='11000' weight='700' foreground='#f8fafc'>{GLib.markup_escape_text(scr.get('title', ''))}</span>")
+        title_lbl.set_halign(Gtk.Align.START)
+        title_lbl.set_wrap(True)
+        self.wizard_body.append(title_lbl)
+
+        if scr.get("subtitle"):
+            sub_lbl = Gtk.Label()
+            sub_lbl.set_markup(f"<span size='9000' foreground='#cbd5e1'>{GLib.markup_escape_text(scr.get('subtitle', ''))}</span>")
+            sub_lbl.set_halign(Gtk.Align.START)
+            sub_lbl.set_wrap(True)
+            self.wizard_body.append(sub_lbl)
+
+        for node in scr.get("body", []):
+            self._wizard_append(node)
+        for node in scr.get("footer", []):
+            self._wizard_append(node)
+
+        self.wizard_body.set_visible(True)
+
+        if scr.get("busy"):
+            self._wizard_start_poll()
+
+    def _wizard_append(self, node: dict) -> None:
+        t = node.get("t")
+        if t == "text":
+            lbl = Gtk.Label()
+            if node.get("dim"):
+                markup = f"<span size='9000' foreground='#94a3b8'>{GLib.markup_escape_text(node.get('text', ''))}</span>"
+            elif node.get("accent"):
+                markup = f"<span size='9500' weight='600' foreground='#c4b5fd'>{GLib.markup_escape_text(node.get('text', ''))}</span>"
+            else:
+                markup = f"<span size='9500' foreground='#e2e8f0'>{GLib.markup_escape_text(node.get('text', ''))}</span>"
+            lbl.set_markup(markup)
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_wrap(True)
+            self.wizard_body.append(lbl)
+        elif t == "sub":
+            lbl = Gtk.Label()
+            lbl.set_markup(f"<span size='10000' weight='700' foreground='#a5b4fc'>{GLib.markup_escape_text(node.get('text', ''))}</span>")
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_wrap(True)
+            self.wizard_body.append(lbl)
+        elif t == "note":
+            level = node.get("level", "info")
+            colors = {"info": "#38bdf8", "ok": "#34d399", "warn": "#fbbf24", "error": "#f87171"}
+            color = colors.get(level, "#38bdf8")
+            lbl = Gtk.Label()
+            lbl.set_markup(f"<span size='9000' weight='600' foreground='{color}'>{GLib.markup_escape_text(node.get('text', ''))}</span>")
+            lbl.set_halign(Gtk.Align.START)
+            lbl.set_wrap(True)
+            self.wizard_body.append(lbl)
+        elif t == "progress":
+            frac = node.get("pct")
+            bar = Gtk.ProgressBar()
+            bar.set_show_text(True)
+            if frac is not None:
+                bar.set_fraction(max(0.0, min(1.0, float(frac))))
+                bar.set_text(f"{node.get('label', '')} {int(float(frac) * 100)}%")
+            else:
+                bar.set_fraction(0.0)
+                bar.set_text(node.get("label", "") or "Working…")
+            bar.set_halign(Gtk.Align.FILL)
+            self.wizard_body.append(bar)
+            self._wizard_progress_bar = bar
+        elif t == "spacer":
+            box = Gtk.Box()
+            box.set_size_request(-1, 8)
+            self.wizard_body.append(box)
+        elif t == "entry":
+            wid = node.get("id", "")
+            def _entry_change(entry_widget, _u=None, field_id=wid):
+                self._wizard_values[field_id] = entry_widget.get_text()
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            if node.get("label"):
+                cap = Gtk.Label()
+                cap.set_markup(f"<span size='8500' weight='600' foreground='#cbd5e1'>{GLib.markup_escape_text(node.get('label', ''))}</span>")
+                cap.set_halign(Gtk.Align.START)
+                row.append(cap)
+            entry_widget = Gtk.Entry()
+            entry_widget.set_text(node.get("default", ""))
+            if node.get("placeholder"):
+                entry_widget.set_placeholder_text(node.get("placeholder", ""))
+            if node.get("secret"):
+                entry_widget.set_visibility(False)
+            entry_widget.set_halign(Gtk.Align.FILL)
+            entry_widget.set_hexpand(True)
+            entry_widget.connect("changed", _entry_change)
+            self._wizard_values[wid] = node.get("default", "")
+            self._wizard_entries[wid] = entry_widget
+            row.append(entry_widget)
+            if node.get("hint"):
+                hint = Gtk.Label()
+                hint.set_markup(f"<span size='8000' foreground='#64748b'>{GLib.markup_escape_text(node.get('hint', ''))}</span>")
+                hint.set_halign(Gtk.Align.START)
+                hint.set_wrap(True)
+                row.append(hint)
+            self.wizard_body.append(row)
+        elif t == "select":
+            wid = node.get("id", "")
+            options = list(node.get("options", []))
+            cap = Gtk.Label()
+            cap.set_markup(f"<span size='8500' weight='600' foreground='#cbd5e1'>{GLib.markup_escape_text(node.get('label', ''))}</span>")
+            cap.set_halign(Gtk.Align.START)
+            self.wizard_body.append(cap)
+            combo = Gtk.DropDown.new_from_strings(
+                [o.get("label", o.get("value", "")) for o in options]
+            )
+            values = [o.get("value", "") for o in options]
+            default = node.get("default", "")
+            sel = next((values.index(o.get("value")) for o in options if o.get("value") == default), 0)
+            combo.set_selected(sel)
+            combo.set_halign(Gtk.Align.FILL)
+            combo.set_hexpand(True)
+            combo.connect("notify::selected", lambda _d, _p, field_id=wid, v=values:
+                          self._wizard_values.__setitem__(field_id, v[_d.get_selected()]))
+            self._wizard_values[wid] = values[sel]
+            self._wizard_selects[wid] = combo
+            self.wizard_body.append(combo)
+        elif t == "check":
+            wid = node.get("id", "")
+            check_btn = Gtk.CheckButton(label=node.get("label", ""))
+            check_btn.set_active(bool(node.get("default")))
+            check_btn.connect("toggled", lambda cb, field_id=wid:
+                              self._wizard_values.__setitem__(field_id, cb.get_active()))
+            self._wizard_values[wid] = bool(node.get("default"))
+            self._wizard_checks[wid] = check_btn
+            self.wizard_body.append(check_btn)
+        elif t == "button":
+            wid = node.get("id", "")
+            label = "{0} {1}".format(node.get("icon", ""), node.get("label", "")).strip()
+            btn = Gtk.Button(label=label)
+            kind = node.get("kind", "secondary")
+            if kind == "primary":
+                btn.add_css_class("primary")
+            btn.add_css_class("sayri-btn")
+            btn.set_halign(Gtk.Align.START)
+            btn.connect("clicked", lambda _b, wid_=wid: self._wizard_emit_action(wid_))
+            self.wizard_body.append(btn)
+
+    def _wizard_emit_action(self, wid: str) -> None:
+        if wid in ("next", "siguiente"):
+            event = {"type": "submit", "value": dict(self._wizard_values)}
+        else:
+            event = {"type": "action", "widget": wid, "value": dict(self._wizard_values)}
+        self._wizard_emit(event)
+
+    def _wizard_emit(self, event: dict) -> None:
+        host = self._wizard_host
+        if host is None:
+            return
+        try:
+            scr = host.dispatch(event)
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            scr = {"id": "host_error", "title": "Error", "subtitle": "", "step": "",
+                   "busy": False, "done": True, "body": [{"t": "note", "text": str(exc), "level": "error"}],
+                   "footer": [{"t": "button", "id": "close", "label": "Back", "kind": "secondary"}]}
+        self._wizard_render(scr)
+
+    def _wizard_start_poll(self) -> None:
+        if self._wizard_polling:
+            return
+        self._wizard_polling = True
+
+        def _tick(_u=None) -> bool:
+            if not self._wizard_polling or self._wizard_host is None:
+                return False
+            try:
+                scr = self._wizard_host.dispatch({"type": "poll"})
+            except Exception:  # noqa: BLE001
+                scr = None
+            if scr is None:
+                self._wizard_polling = False
+                return False
+            if not scr.get("busy"):
+                self._wizard_polling = False
+                self._wizard_render(scr)
+                return False
+            # still busy → re-render so new log lines /  progress updates appear
+            self._wizard_render(scr)
+            return True
+
+        GLib.timeout_add(400, _tick)
+
+    def _wizard_log(self, text: str) -> None:
+        lbl = Gtk.Label()
+        lbl.set_markup(f"<span size='9000' foreground='#f87171'>{GLib.markup_escape_text(text)}</span>")
+        lbl.set_wrap(True)
+        lbl.set_halign(Gtk.Align.START)
+        self.wizard_body.append(lbl)
+
+    def _free_wizard(self) -> None:
+        self._wizard_polling = False
+        self._wizard_host = None
+        self._wizard_entries = {}
+        self._wizard_checks = {}
+        self._wizard_selects = {}
+        while True:
+            child = self.wizard_body.get_first_child()
+            if not child:
+                break
+            self.wizard_body.remove(child)
+
+    def _back_from_wizard(self) -> None:
+        self._free_wizard()
+        self.switch_tab("plugins")
+
     # ── Channel Gateways Logic (Multi-Instance Channel Architecture) ──
     def _populate_gateways(self) -> None:
         while True:
@@ -2434,12 +2722,13 @@ class SayriCajita(Gtk.Box):
         b4, strip_entry = _field("Strip / Filter Words or Tags (e.g. <think>.*?</think>)", cur_strip)
         b5, wake_entry = _field("Wakeword Trigger", cur_wakeword)
 
-        # Re-open the setup wizard (provider, Prism ML, voice, STT) from the UI
-        wiz_btn = Gtk.Button(label="✳ Reopen the setup wizard (provider · Prism ML · voice · STT)")
+        # Re-open the setup wizard (provider, Prism ML, voice, STT) from the UI.
+        # It renders inside this Cajita (no separate window).
+        wiz_btn = Gtk.Button(label="✳ Open the setup wizard (provider · Prism ML · voice · STT)")
         wiz_btn.add_css_class("sayri-action-btn")
         wiz_btn.add_css_class("primary")
         wiz_btn.set_halign(Gtk.Align.START)
-        wiz_btn.connect("clicked", lambda _b: self.app.open_wizard())
+        wiz_btn.connect("clicked", lambda _b: self.switch_tab("wizard"))
         self.settings_box.append(wiz_btn)
 
         self.settings_box.append(b1)

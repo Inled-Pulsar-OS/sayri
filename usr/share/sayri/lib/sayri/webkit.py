@@ -369,7 +369,8 @@ def _serve_uri(request: WebKit.URISchemeRequest) -> None:
     # in the data dir (exported web orb build).
     candidates: list[str] = []
     if path.startswith("xui/"):
-        candidates.append(os.path.join(paths.state_dir(), "xui"))
+        # path already carries the "xui/" prefix; base is the state dir root
+        candidates.append(paths.state_dir())
     candidates.append(paths.data_dir())
     for base in candidates:
         full = os.path.join(base, path)
