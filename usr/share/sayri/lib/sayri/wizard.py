@@ -205,18 +205,50 @@ class WelcomeApp:
             id="provider", step=self._step_label(2),
         )
 
+    def _prism_autofill(self) -> dict:
+        """Autofill base_url/model from the configured Prism plugin (family/size/port)."""
+        try:
+            fp = Path(paths.config_dir()) / "prismml.json"
+            if fp.is_file():
+                cfg = json.loads(fp.read_text(encoding="utf-8"))
+                host = str(cfg.get("host") or "127.0.0.1")
+                port = cfg.get("port") or 8080
+                fam = str(cfg.get("family") or "ternary")
+                size = str(cfg.get("size") or "8B")
+                return {
+                    "base_url": f"http://{host}:{port}/v1",
+                    "model": f"{fam}-{size.lower()}",
+                }
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
+
     def _provider_details_screen(self) -> dict:
         prov = self._provider_info(self.val.get("provider", "ollama"))
-        body = [
-            entry("base_url", "Base URL", default=self.val.get("base_url", prov["base_url"]),
-                  placeholder="http://127.0.0.1:11434/v1", hint="OpenAI-compatible endpoint (…/v1)"),
-            entry("model", "Model", default=self.val.get("model", prov["model"]),
-                  placeholder="llama3.2"),
-            entry("api_key", "API Key (optional)", default=self.val.get("api_key", ""),
-                  secret=True, hint="Leave empty for Ollama / local servers."),
-        ]
         if self._is_prism():
-            body.insert(0, note("Prism ML runs locally on this machine — leave the API key empty.", "info"))
+            fill = self._prism_autofill()
+            base_url_default = fill.get("base_url") or self.val.get("base_url") or prov["base_url"]
+            model_default = fill.get("model") or self.val.get("model") or prov.get("model", "")
+            body = [
+                entry("base_url", "Base URL", default=base_url_default,
+                      placeholder="http://127.0.0.1:8080/v1", hint="OpenAI-compatible endpoint (…/v1)"),
+                entry("model", "Model", default=model_default,
+                      placeholder="ternary-8b"),
+                entry("api_key", "API Key (optional)", default=self.val.get("api_key", ""),
+                      secret=True, hint="Leave empty for Ollama / local servers."),
+            ]
+            body.insert(0, note(
+                f"Prism ML runs locally — pre-filled with your configured model ({self.val.get('prism_family', 'ternary')}/"
+                f"{self.val.get('prism_size', '8B')}) and server ({base_url_default}). Leave the API key empty.", "info"))
+        else:
+            body = [
+                entry("base_url", "Base URL", default=self.val.get("base_url") or prov["base_url"],
+                      placeholder="http://127.0.0.1:11434/v1", hint="OpenAI-compatible endpoint (…/v1)"),
+                entry("model", "Model", default=self.val.get("model") or prov.get("model", ""),
+                      placeholder="llama3.2"),
+                entry("api_key", "API Key (optional)", default=self.val.get("api_key", ""),
+                      secret=True, hint="Leave empty for Ollama / local servers."),
+            ]
         return screen(
             "Provider details",
             body,

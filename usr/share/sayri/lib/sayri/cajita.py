@@ -1664,6 +1664,7 @@ class SayriCajita(Gtk.Box):
         box.append(run_lbl)
 
         running = [False]
+        poll_id = [None]
 
         def _show(text: str, color: str = "#cbd5e1") -> None:
             st_lbl.set_markup(f"<span size='8000' foreground='{color}'>{GLib.markup_escape_text(text)}</span>")
@@ -1708,11 +1709,23 @@ class SayriCajita(Gtk.Box):
             prog.pulse()
 
             def apply_line(line: str, pct: Optional[int]) -> None:
-                if pct is not None:
+                if "llama-server running" in line or "health:" in line:
+                    prog.set_visible(False)
+                    run_lbl.set_markup(
+                        f"<span size='8000' foreground='#86efac'>Server running ✓ — {GLib.markup_escape_text(line[-60:])}</span>")
+                elif pct is not None:
                     prog.set_visible(True)
                     prog.set_fraction(min(1.0, pct / 100.0))
-                run_lbl.set_markup(
-                    f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
+                    run_lbl.set_markup(
+                        f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
+
+            def _poll_status() -> bool:
+                if not running[0]:
+                    return False
+                _refresh()
+                return True
+
+            poll_id[0] = GLib.timeout_add_seconds(3, _poll_status)
 
             def work() -> None:
                 proc = None
@@ -1737,8 +1750,10 @@ class SayriCajita(Gtk.Box):
                 except Exception as exc:  # noqa: BLE001
                     GLib.idle_add(apply_line, f"error: {exc}", None)
                 finally:
-                    GLib.idle_add(prog.set_visible, False)
                     running[0] = False
+                    if poll_id[0] is not None:
+                        GLib.idle_add(lambda: GLib.source_remove(poll_id[0]))
+                    GLib.idle_add(prog.set_visible, False)
                     GLib.idle_add(_refresh)
 
             threading.Thread(target=work, daemon=True).start()

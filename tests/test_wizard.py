@@ -200,8 +200,12 @@ def test_prism_wizard_flow_persists_plugin_config():
     assert "what is missing" in scr["title"]
     scr = app.dispatch({"type": "submit", "value": {}})
     assert scr["id"] == "provider_details"   # after the prism slides
+    # autofill comes from prismml.json (the configured family/size + default port)
+    entries = {e["id"]: e.get("default", "") for e in scr["body"] if e.get("t") == "entry"}
+    assert entries["base_url"] == "http://127.0.0.1:8080/v1", entries
+    assert entries["model"] == "ternary-27b", entries
     scr = app.dispatch({"type": "submit", "value": {
-        "base_url": "http://127.0.0.1:8080/v1", "model": "bonsai-8b", "api_key": ""}})
+        "base_url": "http://127.0.0.1:8080/v1", "model": "ternary-27b", "api_key": ""}})
     cfg_path = os.path.join(os.environ["SAYRI_CONFIG_DIR"], "prismml.json")
     cfg = json.loads(open(cfg_path).read())
     assert cfg["family"] == "ternary" and cfg["quant"] == "f16" and cfg["size"] == "27B"
