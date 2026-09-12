@@ -188,11 +188,8 @@ def test_prism_wizard_flow_persists_plugin_config():
     scr = app.dispatch({"type": "submit", "value": {"language": "en_US"}})
     assert scr["id"] == "provider"
     scr = app.dispatch({"type": "submit", "value": {"provider": "bonsai"}})
-    assert scr["id"] == "provider_details"
-    scr = app.dispatch({"type": "submit", "value": {
-        "base_url": "http://127.0.0.1:8080/v1", "model": "bonsai-8b", "api_key": ""}})
-    assert scr["id"] == "prism_family"
-    assert scr["step"] == "4/10"
+    assert scr["id"] == "prism_family"   # prism slides come BEFORE the model details
+    assert scr["step"] == "3/11"
     scr = app.dispatch({"type": "submit", "value": {"prism_family": "ternary"}})
     assert scr["id"] == "prism_quant"
     assert [o["value"] for o in scr["body"][0]["options"]] == ["pq2_0", "q2_0_g64", "q2_0", "f16"]
@@ -200,16 +197,19 @@ def test_prism_wizard_flow_persists_plugin_config():
     assert scr["id"] == "prism_size"
     scr = app.dispatch({"type": "submit", "value": {"prism_size": "27B"}})
     assert scr["id"] == "prism_overview"
+    assert "what is missing" in scr["title"]
+    scr = app.dispatch({"type": "submit", "value": {}})
+    assert scr["id"] == "provider_details"   # after the prism slides
+    scr = app.dispatch({"type": "submit", "value": {
+        "base_url": "http://127.0.0.1:8080/v1", "model": "bonsai-8b", "api_key": ""}})
     cfg_path = os.path.join(os.environ["SAYRI_CONFIG_DIR"], "prismml.json")
     cfg = json.loads(open(cfg_path).read())
     assert cfg["family"] == "ternary" and cfg["quant"] == "f16" and cfg["size"] == "27B"
-    scr = app.dispatch({"type": "submit", "value": {}})
-    assert scr["id"] == "voice"
     scr = app.dispatch({"type": "submit", "value": {"voice": "", "download_voice": False}})
     assert scr["id"] == "stt"
     scr = app.dispatch({"type": "submit", "value": {"stt_size": "base", "download_stt": False}})
     assert scr["id"] == "review"
-    assert scr["step"] == "10/10"
+    assert scr["step"] == "10/11"
 
 
 if __name__ == "__main__":

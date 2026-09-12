@@ -135,16 +135,17 @@ class WelcomeApp:
         if self.idx == 2:
             return self._provider_screen()
         if self.idx == 3:
-            return self._provider_details_screen()
+            # provider slides come before the model details when Prism ML is chosen
+            return self._prism_family_screen() if self._is_prism() else self._provider_details_screen()
         if self._is_prism():
             if self.idx == 4:
-                return self._prism_family_screen()
-            if self.idx == 5:
                 return self._prism_quant_screen()
-            if self.idx == 6:
+            if self.idx == 5:
                 return self._prism_size_screen()
-            if self.idx == 7:
+            if self.idx == 6:
                 return self._prism_overview_screen()
+            if self.idx == 7:
+                return self._provider_details_screen()
             if self.idx == 8:
                 return self._voice_screen()
             if self.idx == 9:
@@ -161,7 +162,7 @@ class WelcomeApp:
         return self._final or self._done_screen()
 
     def _step_label(self, n: int) -> str:
-        return f"{n}/{10 if self._is_prism() else 7}"
+        return f"{n}/{11 if self._is_prism() else 7}"
 
     def _welcome_screen(self) -> dict:
         return screen(
@@ -206,18 +207,21 @@ class WelcomeApp:
 
     def _provider_details_screen(self) -> dict:
         prov = self._provider_info(self.val.get("provider", "ollama"))
+        body = [
+            entry("base_url", "Base URL", default=self.val.get("base_url", prov["base_url"]),
+                  placeholder="http://127.0.0.1:11434/v1", hint="OpenAI-compatible endpoint (…/v1)"),
+            entry("model", "Model", default=self.val.get("model", prov["model"]),
+                  placeholder="llama3.2"),
+            entry("api_key", "API Key (optional)", default=self.val.get("api_key", ""),
+                  secret=True, hint="Leave empty for Ollama / local servers."),
+        ]
+        if self._is_prism():
+            body.insert(0, note("Prism ML runs locally on this machine — leave the API key empty.", "info"))
         return screen(
             "Provider details",
-            [
-                entry("base_url", "Base URL", default=self.val.get("base_url", prov["base_url"]),
-                      placeholder="http://127.0.0.1:11434/v1", hint="OpenAI-compatible endpoint (…/v1)"),
-                entry("model", "Model", default=self.val.get("model", prov["model"]),
-                      placeholder="llama3.2"),
-                entry("api_key", "API Key (optional)", default=self.val.get("api_key", ""),
-                      secret=True, hint="Leave empty for Ollama / local servers."),
-            ],
+            body,
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="provider_details", step=self._step_label(2),
+            id="provider_details", step=self._step_label(self.idx),
         )
 
     # ── Prism ML (local plugin): family → quantization → size → overview ──
@@ -251,7 +255,7 @@ class WelcomeApp:
                      ],
                      default=self.val.get("prism_family", "ternary"))],
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="prism_family", step=self._step_label(4),
+            id="prism_family", step=self._step_label(self.idx),
         )
 
     def _prism_quant_screen(self) -> dict:
@@ -270,7 +274,7 @@ class WelcomeApp:
             "Quantization (Prism ML)",
             body,
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="prism_quant", step=self._step_label(5),
+            id="prism_quant", step=self._step_label(self.idx),
         )
 
     def _prism_size_screen(self) -> dict:
@@ -291,7 +295,7 @@ class WelcomeApp:
             "Model size (Prism ML)",
             body,
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="prism_size", step=self._step_label(6),
+            id="prism_size", step=self._step_label(self.idx),
         )
 
     def _prism_overview_screen(self) -> dict:
@@ -320,7 +324,7 @@ class WelcomeApp:
                      "info"),
             ],
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="prism_overview", step=self._step_label(7),
+            id="prism_overview", step=self._step_label(self.idx),
         )
 
     def _persist_prism_cfg(self) -> None:
@@ -357,7 +361,7 @@ class WelcomeApp:
                 note("You need the Piper binary (piper). If you don't have it, `sayri downloads piper` installs it.", "info"),
             ],
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="voice", step=self._step_label(3),
+            id="voice", step=self._step_label(self.idx),
         )
 
     def _stt_screen(self) -> dict:
@@ -369,7 +373,7 @@ class WelcomeApp:
                 note("You can install it later with `sayri downloads model <size> <lang>` and `sayri downloads whisper`.", "info"),
             ],
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
-            id="stt", step=self._step_label(4),
+            id="stt", step=self._step_label(self.idx),
         )
 
     def _review_screen(self) -> dict:
@@ -390,14 +394,14 @@ class WelcomeApp:
             rows += [
                 sub("Prism ML"),
                 text(f"  {self.val.get('prism_family')} / {self.val.get('prism_size')} · {det['quant_display']} "
-                     f"· modelo: {'✓' if det['model_ok'] else '✗'} binario: {'✓' if det['binary_ok'] else '✗'}"),
+                     f"· model: {'✓' if det['model_ok'] else '✗'} binary: {'✓' if det['binary_ok'] else '✗'}"),
             ]
         return screen(
             "Review before you finish",
             rows,
             footer=[button("back", "Back"), button("finish", "Finish", kind="primary"),
                     button("apply", "Apply & download", kind="secondary")],
-            id="review", step=self._step_label(5 if not self._is_prism() else 10),
+            id="review", step=self._step_label(self.idx),
         )
 
     def _progress_screen(self) -> dict:
@@ -527,32 +531,36 @@ class WelcomeApp:
                 self.val["model"] = p["model"]
             self.idx = 3
             return self.render()
-        if self.idx == 3:  # provider details
-            self.val.update(value)
-            self.idx = 4
-            return self.render()
-        if self._is_prism():
-            if self.idx == 4:  # prism family
+        if self.idx == 3:  # prism family (Prism) / provider details
+            if self._is_prism():
                 fam = value.get("prism_family") or self.val.get("prism_family", "ternary")
                 self.val["prism_family"] = str(fam)
                 if self.val.get("prism_quant", "") not in [v for v, _, _ in PRISM_QUANTS.get(str(fam), [])]:
                     self.val["prism_quant"] = ""
                 self._persist_prism_cfg()
-                self.idx = 5
-                return self.render()
-            if self.idx == 5:  # prism quant
+                self.idx = 4
+            else:
+                self.val.update(value)
+                self.idx = 4
+            return self.render()
+        if self._is_prism():
+            if self.idx == 4:  # prism quant
                 if value.get("prism_quant"):
                     self.val["prism_quant"] = str(value["prism_quant"])
                 self._persist_prism_cfg()
-                self.idx = 6
+                self.idx = 5
                 return self.render()
-            if self.idx == 6:  # prism size
+            if self.idx == 5:  # prism size
                 if value.get("prism_size"):
                     self.val["prism_size"] = str(value["prism_size"])
                 self._persist_prism_cfg()
+                self.idx = 6
+                return self.render()
+            if self.idx == 6:  # prism overview → provider details
                 self.idx = 7
                 return self.render()
-            if self.idx == 7:  # prism overview → voice
+            if self.idx == 7:  # provider details
+                self.val.update(value)
                 self.idx = 8
                 return self.render()
             if self.idx == 8:  # voice

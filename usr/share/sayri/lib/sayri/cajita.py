@@ -22,6 +22,7 @@ import math
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -1198,7 +1199,12 @@ class SayriCajita(Gtk.Box):
         self.subview_box.append(sub_hdr)
 
         self.subview_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.subview_box.append(self.subview_body)
+        self.subview_scroll = Gtk.ScrolledWindow()
+        self.subview_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.subview_scroll.set_propagate_natural_height(True)
+        self.subview_scroll.set_max_content_height(400)
+        self.subview_scroll.set_child(self.subview_body)
+        self.subview_box.append(self.subview_scroll)
 
         self.card_stack.add_named(self.subview_box, "subview")
 
@@ -1621,6 +1627,135 @@ class SayriCajita(Gtk.Box):
 
             self.plugins_box.append(card)
 
+    # ── Plugin status & download progress (local gateway plugins) ──
+    def _append_plugin_status(self, box: Gtk.Box, manifest: dict, p_dir: Optional[str]) -> None:
+        """Live status plus in-UI download/start progress for entrypoint=gateway.py plugins."""
+        gate = None
+        if p_dir and manifest:
+            cand = Path(p_dir) / (manifest.get("entrypoint") or "")
+            if cand.is_file():
+                gate = cand
+        if gate is None:
+            return
+
+        head = Gtk.Label()
+        head.set_halign(Gtk.Align.START)
+        head.set_markup("<span weight='700' size='9500' foreground='#1e74fb'>PLUGIN STATUS</span>")
+        box.append(head)
+
+        st_lbl = Gtk.Label()
+        st_lbl.set_halign(Gtk.Align.START)
+        st_lbl.set_xalign(0.0)
+        st_lbl.set_selectable(True)
+        st_lbl.set_wrap(True)
+        st_lbl.add_css_class("sayri-terminal-label")
+        st_lbl.set_markup("<span size='8000' foreground='#94a3b8'>checking…</span>")
+        box.append(st_lbl)
+
+        prog = Gtk.ProgressBar()
+        prog.set_visible(False)
+        box.append(prog)
+
+        run_lbl = Gtk.Label()
+        run_lbl.set_halign(Gtk.Align.START)
+        run_lbl.set_xalign(0.0)
+        run_lbl.set_wrap(True)
+        run_lbl.set_markup("<span size='8000' foreground='#64748b'>·</span>")
+        box.append(run_lbl)
+
+        running = [False]
+
+        def _show(text: str, color: str = "#cbd5e1") -> None:
+            st_lbl.set_markup(f"<span size='8000' foreground='{color}'>{GLib.markup_escape_text(text)}</span>")
+
+        def _refresh(_b=None) -> None:
+            def apply_text(text: str) -> None:
+                _show(text)
+
+            def work() -> None:
+                try:
+                    res = subprocess.run([sys.executable, str(gate), "status"],
+                                         capture_output=True, text=True, timeout=20)
+                    text = (res.stdout or "").strip()
+                    if res.returncode != 0 and res.stderr:
+                        text += "\n" + res.stderr.strip()
+                except Exception as exc:  # noqa: BLE001
+                    text = f"error: {exc}"
+                GLib.idle_add(apply_text, text or "(no output)")
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def _run(_b=None) -> None:
+            if running[0]:
+                return
+            running[0] = True
+            cfg = {}
+            if p_dir:
+                try:
+                    cfg = json.loads((Path(p_dir) / "prismml.json").read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    cfg = {}
+            fam = cfg.get("family", "ternary")
+            size = cfg.get("size", "8B")
+            quant = cfg.get("quant") or ""
+            cmd = [sys.executable, str(gate), "run"]
+            if quant:
+                cmd += ["--quant", quant]
+            run_lbl.set_markup(
+                f"<span size='8000' foreground='#94a3b8'>Downloading binary + model and starting "
+                f"{fam}/{size} ({quant or 'auto'})…</span>")
+            prog.set_visible(True)
+            prog.pulse()
+
+            def apply_line(line: str, pct: Optional[int]) -> None:
+                if pct is not None:
+                    prog.set_visible(True)
+                    prog.set_fraction(min(1.0, pct / 100.0))
+                run_lbl.set_markup(
+                    f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
+
+            def work() -> None:
+                proc = None
+                try:
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+                    buf: list[str] = []
+                    while True:
+                        ch = proc.stdout.read(1)  # type: ignore[union-attr]
+                        if not ch:
+                            break
+                        if ch in "\r\n":
+                            line = "".join(buf)
+                            buf.clear()
+                            if line.strip():
+                                m = re.findall(r"(\d{1,3})\s*%", line)
+                                pct = int(m[-1]) if m else None
+                                GLib.idle_add(apply_line, line.strip(), pct)
+                        else:
+                            buf.append(ch)
+                    proc.wait()
+                except Exception as exc:  # noqa: BLE001
+                    GLib.idle_add(apply_line, f"error: {exc}", None)
+                finally:
+                    GLib.idle_add(prog.set_visible, False)
+                    running[0] = False
+                    GLib.idle_add(_refresh)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        btnr = Gtk.Button(label="Refresh status")
+        btnr.add_css_class("sayri-action-btn")
+        btnr.connect("clicked", _refresh)
+        box.append(btnr)
+
+        btn_run = Gtk.Button(label="Download & start server (progress below)")
+        btn_run.add_css_class("sayri-action-btn")
+        btn_run.add_css_class("primary")
+        btn_run.connect("clicked", _run)
+        box.append(btn_run)
+
+        _refresh()
+
     def show_edit_plugin_view(self, plugin_data: dict) -> None:
         def _builder(box: Gtk.Box):
             pid = plugin_data.get("id", "plugin")
@@ -1642,6 +1777,7 @@ class SayriCajita(Gtk.Box):
                     manifest = {}
             saved_fields = []
             if manifest:
+                self._append_plugin_status(box, manifest, p_dir)
                 from sayri import plugin_settings as ps
 
                 editable = ps.editable_fields(ps.settings_schema(manifest))
