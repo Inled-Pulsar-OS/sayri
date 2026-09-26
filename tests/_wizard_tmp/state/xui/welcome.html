@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Sayri · Welcome</title>
+<link rel="icon" href="data:," />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: rgba(10,12,18,0.96);
+               color: #e6ebf2; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 40px; }
+  header { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: 14px; }
+  .logo { font-weight: 800; letter-spacing: .04em; background: linear-gradient(90deg,#22c55e,#38bdf8);
+          -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header h1 { font-size: 22px; margin: 0; }
+  .step { margin-left: auto; color: #7bd8f0; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .subtitle { color: #94a3b8; margin: 8px 0 18px; }
+  .body { display: flex; flex-direction: column; gap: 12px; }
+  .row.text { font-size: 15px; }
+  .row.text.dim { color: #94a3b8; }
+  .row.text.accent { font-weight: 700; }
+  .sub { color: #7bd8f0; font-size: 13px; letter-spacing: .03em; text-transform: uppercase; }
+  .note { border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
+  .note.info { background: rgba(56,189,248,.12); color: #bae6fd; }
+  .note.ok   { background: rgba(34,197,94,.13); color: #bbf7d0; }
+  .note.warn { background: rgba(250,204,21,.12); color: #fef08a; }
+  .note.error{ background: rgba(248,113,113,.14); color: #fecaca; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12.5px; color: #94a3b8; font-weight: 600; }
+  input[type=text], input[type=password] { background:#0e1626; border:1px solid rgba(255,255,255,.12);
+      border-radius:8px; padding:9px 11px; color:#e6ebf2; font:14px inherit; outline:none; }
+  input:focus { border-color:#38bdf8; box-shadow:0 0 0 2px rgba(56,189,248,.18); }
+  .hint { font-size:12px; color:#64748b; }
+  .opts { display:flex; flex-direction:column; gap:6px; }
+  .opt { display:flex; align-items:flex-start; gap:10px; background:#0e1626; border:1px solid rgba(255,255,255,.09);
+         border-radius:10px; padding:9px 12px; cursor:pointer; }
+  .opt:hover { border-color:#38bdf8; }
+  .opt.sel { border-color:#22c55e; background:rgba(34,197,94,.08); }
+  .opt .radio { width:14px; height:14px; border-radius:50%; border:2px solid #475569; margin-top:3px; flex:none; }
+  .opt.sel .radio { border-color:#22c55e; background:#22c55e; }
+  .opt .r { display:flex; flex-direction:column; }
+  .opt .r .l { font-weight:600; }
+  .opt .r .d { font-size:12px; color:#94a3b8; }
+  .check { display:flex; align-items:center; gap:9px; cursor:pointer; background:#0e1626;
+           border:1px solid rgba(255,255,255,.09); border-radius:10px; padding:9px 12px; }
+  .check .box { width:16px; height:16px; border-radius:5px; border:2px solid #475569; flex:none; }
+  .check.on .box { border-color:#22c55e; background:#22c55e; }
+  .pbar { height:8px; background:#0e1626; border-radius:99px; overflow:hidden; }
+  .pbar .fill { height:100%; background:linear-gradient(90deg,#38bdf8,#22c55e); transition:width .2s; }
+  .pbar .indet { width:40%; height:100%; background:linear-gradient(90deg,#38bdf8,#22c55e);
+                 animation: slide 1.1s linear infinite; }
+  @keyframes slide { from { margin-left:-40%; } to { margin-left:100%; } }
+  .plabel { font-size:12.5px; color:#94a3b8; margin-bottom:4px; }
+  .progtext { font-size:14px; margin-top:8px; white-space:pre-wrap; color:#cbd5e1; max-height:140px; overflow:auto; }
+  .footer { display:flex; gap:10px; justify-content:flex-end; margin-top:24px; }
+  button { font:inherit; border-radius:10px; padding:9px 18px; cursor:pointer; border:1px solid rgba(255,255,255,.14);
+           background:#16213a; color:#e6ebf2; }
+  button.primary { background:linear-gradient(90deg,#22c55e,#16a34a); border-color:transparent; font-weight:700; color:#04120a; }
+  button.danger { background:rgba(248,113,113,.14); border-color:rgba(248,113,113,.4); color:#fecaca; }
+  button:hover { filter:brightness(1.12); }
+  button:disabled, .disabled { opacity:.5; pointer-events:none; }
+  .done { text-align:center; padding:40px 0; }
+  .done .big { font-size:52px; }
+  .busyline { display:flex; align-items:center; gap:10px; color:#7bd8f0; margin-top:14px; }
+  .spin { width:16px; height:16px; border-radius:50%; border:2px solid #7bd8f0; border-top-color:transparent; animation: rot .8s linear infinite; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 class="logo">SAYRI</h1>
+    <h1 id="title"></h1>
+    <div class="step" id="step"></div>
+  </header>
+  <div class="subtitle" id="subtitle"></div>
+  <div class="body" id="body"></div>
+  <div class="footer" id="footer"></div>
+  <div id="stat"></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  var TRANSPORT = {"kind": "webkit"};
+  var state = {};          // field id -> value
+  var busy = false;
+  var pollTimer = null;
+
+  function post(msg) {
+    if (TRANSPORT.kind === "webkit") {
+      try {
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayri) {
+          window.webkit.messageHandlers.sayri.postMessage(JSON.stringify(msg));
+          return;
+        }
+      } catch (e) { /* fallthrough */ }
+      window.parent && window.parent.postMessage(msg, "*");
+    } else if (TRANSPORT.kind === "fetch") {
+      fetch(TRANSPORT.endpoint || "/api/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(msg)
+      }).then(function (r) { return r.json(); }).then(function (screen) {
+        if (screen && screen.title) app.render(screen);
+      }).catch(function (err) { app.render({ title: "Error", body: [{ t: "note", text: String(err), level: "error" }], footer: [] }); });
+    }
+  }
+
+  function el(tag, cls, html) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (html !== undefined) n.innerHTML = html;
+    return n;
+  }
+
+  function collect() {
+    var out = {};
+    for (var k in state) out[k] = state[k];
+    return out;
+  }
+
+  function inputWidgetsExist(src) {
+    var all = src.body.concat(src.footer || []);
+    for (var i = 0; i < all.length; i++) {
+      var t = all[i].t;
+      if (t === "entry" || t === "select" || t === "check") return true;
+    }
+    return false;
+  }
+
+  var app = {
+    render: function (src) {
+      document.getElementById("title").textContent = src.title || "Sayri";
+      document.getElementById("step").textContent = src.step || "";
+      document.getElementById("subtitle").textContent = src.subtitle || "";
+      document.getElementById("stat").textContent = "";
+      busy = !!src.busy;
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (busy) {
+        pollTimer = setInterval(function () { post({ type: "poll" }); }, 900);
+      }
+
+      var body = document.getElementById("body");
+      body.innerHTML = "";
+      (src.body || []).forEach(function (node) { body.appendChild(renderNode(src, node)); });
+
+      var foot = document.getElementById("footer");
+      foot.innerHTML = "";
+      if (src.done) {
+        foot.appendChild(buttonNode({ id: "close", label: "Close", kind: "secondary" }));
+        return;
+      }
+      (src.footer || []).forEach(function (b) { foot.appendChild(buttonNode(b)); });
+
+      // seed initial field state
+      (src.body || []).concat(src.footer || []).forEach(function (n) {
+        var t = n.t;
+        if (t === "entry" && !(n.id in state)) state[n.id] = n.default || "";
+        if (t === "check" && !(n.id in state)) state[n.id] = !!n.default;
+        if (t === "select") {
+          var optSel = (n.options || []).filter(function (o) { return o.value === n.default; });
+          if (!(n.id in state)) state[n.id] = (optSel.length ? n.default : (n.options || [])[0] && n.options[0].value);
+        }
+      });
+    },
+
+    setBusy: function (b) {
+      if (b) { post({ type: "poll" }); }
+    }
+  };
+
+  function renderNode(src, node) {
+    var t = node.t;
+    if (t === "text") {
+      var p = el("div", "row text" + (node.accent ? " accent" : "") + (node.dim ? " dim" : ""));
+      p.innerHTML = esc(node.text).replace(/\n/g, "<br>");
+      return p;
+    }
+    if (t === "sub") return el("div", "sub", esc(node.text));
+    if (t === "note") return el("div", "note " + node.level, esc(node.text));
+    if (t === "spacer") return el("div", "", "");
+    if (t === "progress") {
+      var box = el("div", "", "");
+      var lab = el("div", "plabel", esc(node.label || ""));
+      var bar = el("div", "pbar");
+      if (node.pct === null || node.pct === undefined) {
+        bar.appendChild(el("div", "indet", ""));
+      } else {
+        var fill = document.createElement("div");
+        fill.className = "fill";
+        fill.style.width = Math.max(0, Math.min(100, node.pct * 100)) + "%";
+        bar.appendChild(fill);
+      }
+      box.appendChild(lab); box.appendChild(bar);
+      return box;
+    }
+    if (t === "entry") {
+      var f = el("div", "field");
+      if (node.label) f.appendChild(el("label", "", esc(node.label)));
+      var inp = document.createElement("input");
+      inp.type = node.secret ? "password" : "text";
+      inp.placeholder = node.placeholder || "";
+      inp.value = state[node.id] || "";
+      inp.addEventListener("input", function () { state[node.id] = inp.value; });
+      inp.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") post({ type: "submit", value: collect() });
+      });
+      f.appendChild(inp);
+      if (node.hint) f.appendChild(el("div", "hint", esc(node.hint)));
+      return f;
+    }
+    if (t === "select") {
+      var sf = el("div", "field");
+      if (node.label) sf.appendChild(el("label", "", esc(node.label)));
+      var opts = el("div", "opts");
+      var i, opt;
+      for (i = 0; i < node.options.length; i++) {
+        (function (o) {
+          opt = el("div", "opt" + (o.value === state[node.id] ? " sel" : ""));
+          opt.appendChild(el("div", "radio", ""));
+          var r = el("div", "r");
+          r.appendChild(el("div", "l", esc(o.label || o.value)));
+          if (o.desc) r.appendChild(el("div", "d", esc(o.desc)));
+          opt.appendChild(r);
+          opt.addEventListener("click", function () {
+            state[node.id] = o.value;
+            opts.querySelectorAll(".opt").forEach(function (x) { x.classList.remove("sel"); });
+            opt.classList.add("sel");
+          });
+          opts.appendChild(opt);
+        })(node.options[i]);
+      }
+      sf.appendChild(opts);
+      return sf;
+    }
+    if (t === "check") {
+      var c = el("div", "check" + (state[node.id] ? " on" : ""));
+      c.appendChild(el("div", "box", ""));
+      c.appendChild(el("span", "", esc(node.label)));
+      c.addEventListener("click", function () {
+        state[node.id] = !state[node.id];
+        c.classList.toggle("on", state[node.id]);
+      });
+      return c;
+    }
+    if (t === "button") return buttonNode(node);
+    return el("div", "row text", esc(JSON.stringify(node)));
+  }
+
+  function buttonNode(b) {
+    var btn = el("button", b.kind || "secondary", esc(b.label));
+    btn.addEventListener("click", function () {
+      post({ type: "action", widget: b.id, value: collect() });
+    });
+    return btn;
+  }
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  window.xui = {
+    render: app.render,
+    setBusy: app.setBusy,
+    state: function () { return collect(); }
+  };
+
+  if (TRANSPORT.kind === "webkit") {
+    try {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayri) {
+        window.webkit.messageHandlers.sayri.postMessage(JSON.stringify({ type: "xui_ready" }));
+      }
+    } catch (e) { /* host will push initial screen */ }
+  }
+
+  app.render({"id": "welcome", "title": "Welcome to Sayri", "subtitle": "One-minute setup", "step": "7/7", "body": [{"t": "text", "text": "Hi 👋", "accent": true, "dim": false}, {"t": "text", "text": "Sayri is your personal AI assistant.", "accent": false, "dim": true}, {"t": "text", "text": "This one-minute setup guides you through language, AI provider, voice and STT.", "accent": false, "dim": true}, {"t": "note", "text": "Everything you configure is saved in ~/.config/sayri and can be changed later in Settings.", "level": "info"}], "footer": [{"t": "button", "id": "start", "label": "Start", "kind": "primary", "icon": ""}, {"t": "button", "id": "skip", "label": "Skip", "kind": "secondary", "icon": ""}], "busy": false, "done": false});
+})();
+</script>
+</body>
+</html>

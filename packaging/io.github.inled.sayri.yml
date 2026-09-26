@@ -1,0 +1,102 @@
+# ==============================================================================
+# Sayri - Flatpak manifest (es.inled.sayri)
+#
+# Build with (repo root is this file's parent, i.e. packaging/):
+#   flatpak-builder --user --install --force-clean build-dir \
+#       packaging/io.github.inled.sayri.yml
+#   flatpak build-bundle ~/.local/share/flatpak/repo sayri.flatpak es.inled.sayri
+#
+# The `dir` source paths are resolved relative to the manifest file's
+# directory (packaging/), so ../usr and ../etc point back at the repo root.
+#
+# Known limitations inside the Flatpak sandbox:
+#   - Runs on the org.gnome.Platform runtime: GTK4, WebKitGTK 6.0 and GObject
+#     introspection come from the platform; PyGObject (python3-gi) is built from
+#     source here to match the platform's Python.
+#   - The GNOME runtime does NOT include GTK3. The tray indicator
+#     (indicator.py, uses GTK3 + AppIndicator3) and the standalone GTK3
+#     settings window (settings_gtk3.py) will not work inside the sandbox.
+#     The main GTK4 overlay, cajita, and the in-overlay settings views work
+#     as normal.
+#   - gtk4-layer-shell, whisper.cpp, Piper, grim, ydotool and bubblewrap are not
+#     bundled. The wrapper's layer-shell preload finds no lib and degrades
+#     gracefully (GNOME Wayland does not support layer-shell anyway). The
+#     settings window can download whisper.cpp / Piper at runtime into
+#     ~/.local/share/sayri (writable via --filesystem=home).
+#   - The bubblewrap sandbox levels (1/2) cannot nest inside a Flatpak; without
+#     bwrap they fall back to the host user.
+# ==============================================================================
+id: es.inled.sayri
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: sayri
+
+finish-args:
+  # Display servers
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # Audio (mic + playback) via PulseAudio / PipeWire
+  - --socket=pulseaudio
+  # Network (OpenAI-compatible LLM endpoints, Pulsar store, downloads)
+  - --share=network
+  # Home writable so whisper / Piper models and binaries can be downloaded
+  - --filesystem=home
+  # GPU for the WebKit-rendered orb (CanvasKit uses WebGL)
+  - --device=dri
+  # D-Bus: portals (screenshots, file dialogs), system tray, shell blur
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=com.canonical.AppMenu.Registrar
+  - --talk-name=org.gnome.Shell
+
+modules:
+  # pycairo: python3-cairo bindings. Sayri imports `cairo` directly
+  # (cajita.py, orb.py). Built before pygobject so PyGObject can produce its
+  # Cairo bindings too. Uses Meson, provided by the GNOME SDK.
+  - name: pycairo
+    buildsystem: meson
+    config-opts:
+      - -Dpython=python3
+    cleanup:
+      - '*.a'
+    sources:
+      - type: archive
+        url: https://files.pythonhosted.org/packages/26/7c/ab4637b028d9ee12280ab9342f28310e613d5ca30c4d72d2aebeaa6a4969/pycairo-1.29.1.tar.gz
+        sha256: 4fbd26b4af24c9787d84cf5448e34eb8dca064b732479aaecd03109520eebd5f
+
+  # PyGObject (python3-gi) built against the platform's Python (3.13 on GNOME
+  # 47). The platform carries GTK4/WebKitGTK6 introspection; PyGObject provides
+  # the Python bindings.
+  - name: pygobject
+    buildsystem: meson
+    config-opts:
+      - -Dpython=python3
+    cleanup:
+      - '*.a'
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/pygobject/3.50/pygobject-3.50.0.tar.xz
+        sha256: 8d836e75b5a881d457ee1622cae4a32bcdba28a0ba562193adb3bbb472472212
+
+  # The Sayri package tree. usr/bin -> /app/bin, usr/share -> /app/share,
+  # etc -> /app/etc. The bundled `sayri` wrapper resolves its lib via
+  # <script_dir>/../share/sayri/lib so launching /app/bin/sayri works as-is.
+  - name: sayri
+    buildsystem: simple
+    build-commands:
+      - cp -a usr/bin/. /app/bin/
+      - cp -a usr/share/. /app/share/
+      - mkdir -p /app/etc/xdg/autostart /app/share/applications /app/share/icons/hicolor
+      - cp -a etc/xdg/autostart/sayri.desktop /app/etc/xdg/autostart/
+      - chmod 0755 /app/bin/sayri /app/bin/sayri-indicator /app/bin/sayri-settings /app/bin/sayri-skills /app/bin/sayri-plugins
+      - cp usr/share/applications/sayri.desktop /app/share/applications/
+      - cp -a usr/share/icons/hicolor/. /app/share/icons/hicolor/
+    sources:
+      - type: dir
+        path: ../usr
+        dest: usr
+      - type: dir
+        path: ../etc
+        dest: etc

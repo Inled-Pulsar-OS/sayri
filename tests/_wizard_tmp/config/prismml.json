@@ -1,0 +1,5 @@
+{
+  "family": "ternary",
+  "size": "27B",
+  "quant": "f16"
+}

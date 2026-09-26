@@ -1,0 +1,52 @@
+# Maintainer: Jaice <info@inled.es>
+# Arch build for Sayri - Siri-like voice assistant for Pulsar OS.
+#
+# The repository ships the app as a Debian-style tree (usr/ + etc/). The build
+# script (build-packages.sh) tars the payload and README next to this PKGBUILD,
+# which makepkg extracts into $srcdir.
+#
+# pkgver is injected by build-packages.sh.
+
+pkgname=sayri
+pkgver=0.1.3
+pkgrel=1
+pkgdesc="Siri-like voice assistant for Pulsar OS with a reactive GTK4 orb"
+arch=('any')
+url="https://github.com/Inled-Pulsar-OS/sayri"
+license=('MIT')
+depends=(
+    'python'
+    'python-gobject'
+    'python-httpx'
+    'gtk4'
+    'gtk3'
+    'webkitgtk-6.0'
+    'gtk4-layer-shell'
+    'pipewire'
+)
+optdepends=(
+    'whisper.cpp: speech-to-text'
+    'bubblewrap: isolated sandbox levels (1 and 2)'
+    'grim: screenshots'
+    'ydotool: input automation'
+    'xdg-utils: open URLs in browser'
+    'libayatana-appindicator: system tray indicator'
+)
+source=('usr.tar.gz' 'etc.tar.gz' 'README.md')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+    install -d "$pkgdir/usr" "$pkgdir/etc"
+    cp -a usr/. "$pkgdir/usr/"
+    cp -a etc/. "$pkgdir/etc/"
+
+    chmod 0755 \
+        "$pkgdir/usr/bin/sayri" \
+        "$pkgdir/usr/bin/sayri-indicator" \
+        "$pkgdir/usr/bin/sayri-settings" \
+        "$pkgdir/usr/bin/sayri-skills" \
+        "$pkgdir/usr/bin/sayri-plugins"
+
+    # Keep a copy of the README in /usr/share/doc.
+    install -Dm0644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md" 2>/dev/null || true
+}

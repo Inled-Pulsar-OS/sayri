@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "sayri-orb",
+    "slug": "sayri-orb",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#00000000",
+    "android": {
+      "package": "es.inled.sayri.orb"
+    },
+    "ios": {
+      "bundleIdentifier": "es.inled.sayri.orb"
+    },
+    "web": {
+      "bundler": "metro",
+      "build": {
+        "template": "./index.html"
+      }
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
+  }
+}
