@@ -1061,7 +1061,7 @@ class SayriApp(Gtk.Application):
             lib_path = os.path.dirname(os.path.dirname(__file__))
             env["PYTHONPATH"] = lib_path + (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
             env.pop("LD_PRELOAD", None)
-            self._settings_proc = subprocess.Popen([sys.executable, "-m", "sayri.settings_gtk3"], env=env)
+            self._settings_proc = subprocess.Popen([sys.executable, "-m", "sayri.settings_cajita"], env=env)
         except Exception:
             if self.settings_win is None:
                 self.settings_win = settings_window.SettingsWindow(self)

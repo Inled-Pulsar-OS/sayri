@@ -171,3 +171,44 @@ def kill_process_tree(pattern: Optional[str] = None, pid: Optional[int] = None) 
                 os.kill(int(line), signal.SIGKILL)
             except OSError:
                 pass
+
+
+def get_primary_geometry_gnome() -> tuple[int, int, int, int] | None:
+    """Query GNOME Mutter DBus for the configured primary monitor (x, y, width, height)."""
+    try:
+        from gi.repository import Gio
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        proxy = Gio.DBusProxy.new_sync(
+            bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.gnome.Mutter.DisplayConfig",
+            "/org/gnome/Mutter/DisplayConfig",
+            "org.gnome.Mutter.DisplayConfig",
+            None,
+        )
+        state = proxy.GetCurrentState()
+        mode_map = {}
+        for out in state[1]:
+            name = out[0][0]
+            modes = out[1]
+            for m in modes:
+                if len(m) > 6 and m[6].get("is-current", False):
+                    mode_map[name] = (m[1], m[2])
+                    break
+
+        for mon in state[2]:
+            if mon[4]:  # primary == True
+                lx, ly, lscale = int(mon[0]), int(mon[1]), float(mon[2])
+                outputs = mon[5]
+                w, h = 1920, 1080
+                if outputs and len(outputs) > 0 and len(outputs[0]) > 0:
+                    conn_name = str(outputs[0][0])
+                    if conn_name in mode_map:
+                        mw, mh = mode_map[conn_name]
+                        w = int(mw / lscale) if lscale > 0 else mw
+                        h = int(mh / lscale) if lscale > 0 else mh
+                return (lx, ly, w, h)
+    except Exception:
+        pass
+    return None

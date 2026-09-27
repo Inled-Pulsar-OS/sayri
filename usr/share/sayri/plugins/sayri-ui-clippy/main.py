@@ -21,6 +21,9 @@ sayri_lib = os.path.normpath(os.path.join(script_dir, "..", "..", "lib"))
 if os.path.isdir(sayri_lib) and sayri_lib not in sys.path:
     sys.path.insert(0, sayri_lib)
 
+if os.environ.get("DISPLAY") and os.environ.get("SAYRI_FORCE_WAYLAND") != "1":
+    os.environ["GDK_BACKEND"] = "x11"
+
 try:
     import gi
     gi.require_version("Gtk", "3.0")
@@ -210,8 +213,7 @@ class RetroCompanionWindow:
 
     def _position_bottom_right(self) -> None:
         try:
-            from sayri.webkit import get_primary_geometry_gnome
-            geom = get_primary_geometry_gnome()
+            geom = sysinfo.get_primary_geometry_gnome()
             if geom:
                 gx, gy, gw, gh = geom
                 self.win.move(gx + gw - 450, gy + gh - 390)

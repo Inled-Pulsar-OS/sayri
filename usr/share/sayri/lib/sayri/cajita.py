@@ -2827,7 +2827,8 @@ class SayriCajita(Gtk.Box):
                 break
             self.settings_box.remove(child)
 
-        cfg = getattr(self.app, "cfg", None)
+        from sayri import config as sayri_config
+        cfg = getattr(self.app, "cfg", None) or sayri_config.config
         cur_url = cfg.get_string("provider", "base_url") if cfg else "https://api.groq.com/openai/v1"
         cur_key = cfg.get_string("provider", "api_key") if cfg else ""
         cur_model = cfg.get_string("provider", "model") if cfg else "llama-3.3-70b-versatile"
@@ -2842,7 +2843,8 @@ class SayriCajita(Gtk.Box):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             l = Gtk.Label()
             l.set_halign(Gtk.Align.START)
-            l.set_markup(f"<span foreground='#94a3b8' size='9000'><b>{label_text}</b></span>")
+            escaped = GLib.markup_escape_text(label_text)
+            l.set_markup(f"<span foreground='#94a3b8' size='9000'><b>{escaped}</b></span>")
             e = Gtk.Entry()
             e.add_css_class("sayri-settings-entry")
             e.set_text(default_val or "")
