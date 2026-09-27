@@ -22,7 +22,8 @@ from gi.repository import Gio, GLib
 BLS_APPS_SCHEMA = "org.gnome.shell.extensions.blur-my-shell.applications"
 ENTRIES_TO_BLACKLIST = [
     "sayri", "Sayri", "es.inled.sayri", "sayri-overlay",
-    "sayri-indicator", "sayri-tray", "*sayri*", "*Sayri*"
+    "sayri-indicator", "sayri-tray", "*sayri*", "*Sayri*",
+    "sayri-ui-clippy", "sayri-companion", "clippy", "*clippy*", "Sayri Companion"
 ]
 
 __all__ = ["apply_blur_exclusion"]

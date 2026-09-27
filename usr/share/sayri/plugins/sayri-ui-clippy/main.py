@@ -50,8 +50,13 @@ except Exception:
     _LAYER_OK = False
 
 from sayri import config as sayri_config
-from sayri import ipc, paths, sysinfo
+from sayri import ipc, paths, sysinfo, blur_exclusion
 import subprocess
+
+try:
+    blur_exclusion.apply_blur_exclusion()
+except Exception:
+    pass
 
 AVAILABLE_CHARACTERS = [
     ("Clippy", "📎 Clippy (Paperclip)"),
@@ -188,6 +193,8 @@ class RetroCompanionWindow:
         self.ipc_thread = threading.Thread(target=self._ipc_listener_loop, daemon=True)
         self.ipc_thread.start()
 
+        self.win.connect("realize", lambda *_: self._position_bottom_right())
+        self.win.connect("map", lambda *_: (self._position_bottom_right(), GLib.timeout_add(100, lambda: (self._position_bottom_right(), False))))
         self._position_bottom_right()
 
     def _write_pid(self) -> None:
@@ -199,11 +206,21 @@ class RetroCompanionWindow:
 
     def _position_bottom_right(self) -> None:
         try:
+            from sayri.webkit import get_primary_geometry_gnome
+            geom = get_primary_geometry_gnome()
+            if geom:
+                gx, gy, gw, gh = geom
+                self.win.move(gx + gw - 450, gy + gh - 390)
+                return
+        except Exception:
+            pass
+        try:
             if _GTK_VERSION == 3:
-                screen = Gdk.Screen.get_default()
+                screen = self.win.get_screen() or Gdk.Screen.get_default()
                 if screen:
-                    geom = screen.get_monitor_geometry(screen.get_primary_monitor())
-                    self.win.move(geom.x + geom.width - 460, geom.y + geom.height - 400)
+                    mon = screen.get_primary_monitor()
+                    geom = screen.get_monitor_geometry(mon)
+                    self.win.move(geom.x + geom.width - 450, geom.y + geom.height - 390)
         except Exception:
             pass
 
