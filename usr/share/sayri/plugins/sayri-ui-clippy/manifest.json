@@ -1,13 +1,43 @@
 {
   "id": "sayri-ui-clippy",
-  "name": "Sayri Clippy Retro Companion",
+  "name": "Sayri Classic Companions (Clippy, Bonzi, Merlin…)",
   "type": "ui",
   "version": "1.0.0",
-  "description": "Interactive retro assistant pet that animates on desktop and renders Sayri responses & XUI skeletons in classic speech bubbles",
+  "description": "All-in-one classic animated desktop companions (Clippy, Bonzi Buddy, Merlin, Rover, Peedy, Genie, Links, Rocky, F1) with voice/chat and XUI skeleton rendering",
   "author": "Inled Community",
   "entrypoint": "main.py",
   "ui": {
     "kind": "character",
-    "xui_renderer": "speech-bubble"
+    "xui_renderer": "speech-bubble",
+    "sync_instructions": "Selecciona el personaje retro que quieres usar como asistente de escritorio.",
+    "settings": [
+      {
+        "t": "select",
+        "id": "character",
+        "key": "character",
+        "label": "Personaje / Avatar",
+        "default": "Clippy",
+        "hint": "Elige el avatar que aparecerá animado en tu pantalla",
+        "options": [
+          {"value": "Clippy", "label": "📎 Clippy (Paperclip)"},
+          {"value": "Bonzi", "label": "🐒 Bonzi Buddy (Purple Gorilla)"},
+          {"value": "Merlin", "label": "🧙 Merlin (Wizard)"},
+          {"value": "Rover", "label": "🐕 Rover (Dog)"},
+          {"value": "Peedy", "label": "🦜 Peedy (Green Parrot)"},
+          {"value": "Genie", "label": "🧞 Genie"},
+          {"value": "Links", "label": "🐈 Links (Cat)"},
+          {"value": "Rocky", "label": "🐶 Rocky"},
+          {"value": "F1", "label": "🤖 F1 (Robot)"}
+        ]
+      },
+      {
+        "t": "check",
+        "id": "sound_effects",
+        "key": "sound_effects",
+        "label": "Efectos de sonido clásicos",
+        "default": true,
+        "hint": "Reproduce los sonidos nostálgicos al hablar o cambiar de estado"
+      }
+    ]
   }
 }

@@ -43,12 +43,7 @@ package() {
         cp -a etc/. "$pkgdir/etc/"
     fi
 
-    chmod 0755 \
-        "$pkgdir/usr/bin/sayri" \
-        "$pkgdir/usr/bin/sayri-indicator" \
-        "$pkgdir/usr/bin/sayri-settings" \
-        "$pkgdir/usr/bin/sayri-skills" \
-        "$pkgdir/usr/bin/sayri-plugins"
+    chmod 0755 "$pkgdir/usr/bin/"* 2>/dev/null || true
 
     find "$pkgdir/usr/share/sayri/plugins" -type f \( -name "*.py" -o -name "*.sh" \) -exec chmod 0755 {} + 2>/dev/null || true
 

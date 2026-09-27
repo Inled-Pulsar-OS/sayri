@@ -52,38 +52,70 @@ class GatewaySupervisor:
         return dirs
 
     def list_installed_plugins(self) -> List[Dict[str, Any]]:
-        """Scans filesystem for installed Gateway plugins and their manifests."""
+        """Scans filesystem for all installed plugins and their manifests."""
         plugins = []
         seen = set()
 
         for base in self._get_search_dirs():
             if not base.is_dir():
                 continue
-            for sub in base.iterdir():
+            for sub in sorted(base.iterdir()):
                 if sub.is_dir() and (sub / "manifest.json").is_file():
                     try:
                         m = json.loads((sub / "manifest.json").read_text(encoding="utf-8"))
                         auth = m.get("authorization") if isinstance(m.get("authorization"), dict) else {}
                         auth_mode = auth.get("mode", "none")
-                        if not m.get("entrypoint") and auth_mode == "none":
-                            continue
                         pid = m.get("id", sub.name)
-                        if pid not in seen:
-                            seen.add(pid)
-                            plugins.append({
-                                "id": pid,
-                                "name": m.get("name", pid),
-                                "description": m.get("description", ""),
-                                "version": m.get("version", "1.0.0"),
-                                "auth_mode": auth_mode,
-                                "required_secrets": m.get("required_secrets", []),
-                                "sync_instructions": m.get("ui", {}).get("sync_instructions", ""),
-                                "chat_url": m.get("ui", {}).get("chat_url", ""),
-                                "path": sub,
-                            })
+                        if pid in seen:
+                            continue
+
+                        # Determine true plugin category (gateway, ui, tool, service)
+                        if m.get("type"):
+                            ptype = m["type"]
+                        elif m.get("plugin_type"):
+                            ptype = m["plugin_type"]
+                        elif auth_mode != "none" or "gateway" in pid or "channels" in m:
+                            ptype = "gateway"
+                        elif pid.startswith("sayri-ui-") or (isinstance(m.get("ui"), dict) and not m.get("service")):
+                            ptype = "ui"
+                        elif m.get("service"):
+                            ptype = "service"
+                        else:
+                            ptype = "tool"
+
+                        seen.add(pid)
+                        plugins.append({
+                            "id": pid,
+                            "name": m.get("name", pid),
+                            "type": ptype,
+                            "plugin_type": ptype,
+                            "description": m.get("description", ""),
+                            "version": m.get("version", "1.0.0"),
+                            "author": m.get("author", "Sayri Community"),
+                            "auth_mode": auth_mode,
+                            "required_secrets": m.get("required_secrets", []),
+                            "sync_instructions": m.get("ui", {}).get("sync_instructions", "") if isinstance(m.get("ui"), dict) else "",
+                            "chat_url": m.get("ui", {}).get("chat_url", "") if isinstance(m.get("ui"), dict) else "",
+                            "path": sub,
+                            "entrypoint": m.get("entrypoint", ""),
+                            "service": m.get("service"),
+                            "manifest": m,
+                        })
                     except Exception:
                         pass
         return plugins
+
+    def list_installed_gateways(self) -> List[Dict[str, Any]]:
+        """Returns only Channel Gateways (Telegram, Discord, Slack, etc.)."""
+        return [p for p in self.list_installed_plugins() if p["type"] == "gateway"]
+
+    def list_installed_tools(self) -> List[Dict[str, Any]]:
+        """Returns only Tools and Services (PrismML, MCP, WebSearch, Dev tools, etc.)."""
+        return [p for p in self.list_installed_plugins() if p["type"] in ("tool", "service")]
+
+    def list_installed_uis(self) -> List[Dict[str, Any]]:
+        """Returns only UI Plugins (Orb, Clippy, Bonzi Buddy, etc.)."""
+        return [p for p in self.list_installed_plugins() if p["type"] == "ui"]
 
     def find_gateway_plugin_dir(self, plugin_id: str) -> Optional[Path]:
         for base in self._get_search_dirs():

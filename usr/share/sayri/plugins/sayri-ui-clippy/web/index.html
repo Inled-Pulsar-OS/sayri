@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sayri Retro Companion</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      background: transparent !important;
+      overflow: hidden;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #stage {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+    .clippy {
+      cursor: grab;
+      filter: drop-shadow(2px 4px 8px rgba(0,0,0,0.35));
+    }
+    .clippy:active {
+      cursor: grabbing;
+    }
+    /* Retro Windows 98 / Office Speech Balloon */
+    .balloon-wrapper {
+      position: relative;
+      max-width: 340px;
+      min-width: 240px;
+      background-color: #ffffdd;
+      border: 1.5px solid #000000;
+      border-radius: 8px;
+      box-shadow: 3px 4px 10px rgba(0,0,0,0.3);
+      padding: 12px 14px;
+      color: #111111;
+      font-size: 13px;
+      line-height: 1.4;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+    .balloon-wrapper::after {
+      content: "";
+      position: absolute;
+      bottom: -12px;
+      right: 48px;
+      border-width: 12px 10px 0 10px;
+      border-style: solid;
+      border-color: #ffffdd transparent transparent transparent;
+      display: block;
+      width: 0;
+    }
+    .balloon-wrapper::before {
+      content: "";
+      position: absolute;
+      bottom: -14px;
+      right: 47px;
+      border-width: 14px 11px 0 11px;
+      border-style: solid;
+      border-color: #000000 transparent transparent transparent;
+      display: block;
+      width: 0;
+    }
+    .balloon-header {
+      font-weight: bold;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #775500;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .balloon-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    /* XUI declarative skeleton nodes */
+    .xui-container {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .xui-note {
+      background: #fdf6cc;
+      border-left: 3px solid #eab308;
+      padding: 6px 8px;
+      font-size: 12px;
+      border-radius: 2px;
+    }
+    .xui-btn {
+      background: #ece9d8;
+      border: 1px solid #7f9db9;
+      border-radius: 3px;
+      padding: 5px 10px;
+      font-size: 12px;
+      color: #000;
+      cursor: pointer;
+      box-shadow: 1px 1px 0 #fff inset, 1px 1px 2px rgba(0,0,0,0.15);
+      transition: background 0.1s;
+    }
+    .xui-btn:hover {
+      background: #f5f4ea;
+    }
+    .xui-btn:active {
+      box-shadow: 1px 1px 2px rgba(0,0,0,0.3) inset;
+    }
+    .xui-btn.primary {
+      background: #d4e4f7;
+      border-color: #3b82f6;
+      font-weight: bold;
+    }
+    .xui-progress-bar {
+      width: 100%;
+      height: 14px;
+      background: #e2e8f0;
+      border: 1px solid #94a3b8;
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+    .xui-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    /* Input field inside balloon */
+    .input-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .input-row input {
+      flex: 1;
+      border: 1px solid #7f9db9;
+      padding: 4px 6px;
+      font-size: 12px;
+      border-radius: 2px;
+      outline: none;
+      background: #fff;
+    }
+    .input-row button {
+      background: #ece9d8;
+      border: 1px solid #7f9db9;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="balloon" class="balloon-wrapper" style="display: none;">
+      <div id="balloon-header" class="balloon-header">
+        <span id="header-title">💡 Sayri Assistant</span>
+      </div>
+      <div id="balloon-text" class="balloon-text"></div>
+      <div id="xui-area" class="xui-container"></div>
+      <div class="input-row">
+        <input type="text" id="user-input" placeholder="Pregúntame algo..." autocomplete="off">
+        <button id="send-btn">➤</button>
+      </div>
+    </div>
+    <div id="agent-anchor"></div>
+  </div>
+
+  <script type="module">
+    import { initAgent } from "./dist/index.mjs";
+    import * as allAgents from "./dist/agents/index.mjs";
+
+    let currentAgentInstance = null;
+    let currentAgentName = "Clippy";
+    let hideBalloonTimeout = null;
+
+    const balloon = document.getElementById("balloon");
+    const headerTitle = document.getElementById("header-title");
+    const balloonText = document.getElementById("balloon-text");
+    const xuiArea = document.getElementById("xui-area");
+    const userInput = document.getElementById("user-input");
+    const sendBtn = document.getElementById("send-btn");
+
+    async function loadAgent(agentName) {
+      if (currentAgentInstance) {
+        try {
+          currentAgentInstance.hide();
+        } catch (e) {}
+      }
+      currentAgentName = agentName;
+      const agentKey = Object.keys(allAgents).find(k => k.toLowerCase() === agentName.toLowerCase()) || "Clippy";
+      const agentDef = allAgents[agentKey] || allAgents.Clippy;
+
+      document.getElementById("agent-anchor").innerHTML = "";
+
+      currentAgentInstance = await initAgent(agentDef, {
+        container: document.getElementById("agent-anchor")
+      });
+      currentAgentInstance.show();
+      currentAgentInstance.play("Wave");
+
+      showBalloon(`¡Hola! Soy tu asistente Sayri (${agentName}). ¿En qué puedo ayudarte?`);
+    }
+
+    window.switchAgent = function(name) {
+      loadAgent(name);
+    };
+
+    window.showBalloon = function(text, header = "💡 Sayri Assistant") {
+      headerTitle.textContent = header;
+      balloonText.textContent = text;
+      balloon.style.display = "flex";
+      if (hideBalloonTimeout) clearTimeout(hideBalloonTimeout);
+    };
+
+    window.hideBalloon = function() {
+      balloon.style.display = "none";
+    };
+
+    window.renderXuiSkeleton = function(screenData) {
+      xuiArea.innerHTML = "";
+      if (!screenData) return;
+
+      if (screenData.title) {
+        const titleDiv = document.createElement("div");
+        titleDiv.style.fontWeight = "bold";
+        titleDiv.style.marginBottom = "4px";
+        titleDiv.textContent = screenData.title;
+        xuiArea.appendChild(titleDiv);
+      }
+
+      const body = screenData.body || [];
+      body.forEach(node => {
+        if (node.t === "text") {
+          const div = document.createElement("div");
+          div.textContent = node.text || "";
+          xuiArea.appendChild(div);
+        } else if (node.t === "note") {
+          const div = document.createElement("div");
+          div.className = "xui-note";
+          div.textContent = node.text || "";
+          xuiArea.appendChild(div);
+        } else if (node.t === "progress") {
+          const pwrap = document.createElement("div");
+          pwrap.className = "xui-progress-bar";
+          const pfill = document.createElement("div");
+          pfill.className = "xui-progress-fill";
+          pfill.style.width = ((node.pct || 0) * 100) + "%";
+          pwrap.appendChild(pfill);
+          xuiArea.appendChild(pwrap);
+        } else if (node.t === "button") {
+          const btn = document.createElement("button");
+          btn.className = "xui-btn" + (node.kind === "primary" ? " primary" : "");
+          btn.textContent = node.label || node.id;
+          btn.onclick = () => {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
+              window.webkit.messageHandlers.sayriAction.postMessage(node.id);
+            }
+          };
+          xuiArea.appendChild(btn);
+        }
+      });
+
+      const footer = screenData.footer || [];
+      if (footer.length > 0) {
+        const fdiv = document.createElement("div");
+        fdiv.style.display = "flex";
+        fdiv.style.gap = "4px";
+        fdiv.style.marginTop = "4px";
+        footer.forEach(btnNode => {
+          const btn = document.createElement("button");
+          btn.className = "xui-btn primary";
+          btn.style.flex = "1";
+          btn.textContent = btnNode.label || btnNode.id;
+          btn.onclick = () => {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
+              window.webkit.messageHandlers.sayriAction.postMessage(btnNode.id);
+            }
+          };
+          fdiv.appendChild(btn);
+        });
+        xuiArea.appendChild(fdiv);
+      }
+      balloon.style.display = "flex";
+    };
+
+    window.onDaemonEvent = function(event) {
+      const ev = event.event;
+      if (ev === "state") {
+        const st = event.state;
+        if (st === "listening") {
+          if (currentAgentInstance) currentAgentInstance.play("Hearing_1") || currentAgentInstance.play("Listening") || currentAgentInstance.play("LookDown");
+          showBalloon("Escuchando tu voz...", "🎙️ Micrófono");
+        } else if (st === "thinking") {
+          if (currentAgentInstance) currentAgentInstance.play("Thinking") || currentAgentInstance.play("Searching");
+          showBalloon("Pensando la respuesta...", "🤔 Sayri");
+        } else if (st === "speaking") {
+          if (currentAgentInstance) currentAgentInstance.play("Explain") || currentAgentInstance.play("Wave");
+        }
+      } else if (ev === "utterance") {
+        showBalloon(event.text || "", "🎙️ Transcripción");
+      } else if (ev === "assistant_delta" || ev === "assistant_done") {
+        showBalloon(event.text || "", "💬 Sayri");
+        if (currentAgentInstance) currentAgentInstance.play("Explain");
+      } else if (ev === "render_xui") {
+        renderXuiSkeleton(event.screen);
+      }
+    };
+
+    function sendPrompt() {
+      const txt = userInput.value.trim();
+      if (!txt) return;
+      userInput.value = "";
+      showBalloon(txt, "💬 Tú");
+      if (currentAgentInstance) currentAgentInstance.play("Thinking");
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriPrompt) {
+        window.webkit.messageHandlers.sayriPrompt.postMessage(txt);
+      }
+    }
+
+    sendBtn.onclick = sendPrompt;
+    userInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendPrompt();
+    });
+
+    // Default agent initialization
+    loadAgent("Clippy");
+  </script>
+</body>
+</html>

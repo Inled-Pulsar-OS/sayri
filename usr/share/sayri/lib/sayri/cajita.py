@@ -1605,12 +1605,7 @@ class SayriCajita(Gtk.Box):
 
         from sayri.gateway_supervisor import gateway_supervisor
 
-        all_installed = gateway_supervisor.list_installed_plugins()
-        # Filter for tools/extensions (exclude pure gateways or show all with security tags)
-        tool_plugins = [p for p in all_installed if p.get("plugin_type", "gateway") != "gateway" or "gateway" not in p.get("id", "")]
-        if not tool_plugins:
-            tool_plugins = all_installed
-
+        tool_plugins = gateway_supervisor.list_installed_tools()
         if not tool_plugins:
             empty_lbl = Gtk.Label(label="No plugins installed. Visit the Pulsar Store (store-os.inled.es) to install developer tools, web search, or MCP servers.")
             empty_lbl.set_halign(Gtk.Align.START)
@@ -1931,7 +1926,7 @@ class SayriCajita(Gtk.Box):
             btn_stop.connect("clicked", lambda _b: _toggle_service(False))
             box.append(btn_stop)
 
-    def show_edit_plugin_view(self, plugin_data: dict) -> None:
+    def show_edit_plugin_view(self, plugin_data: dict, on_back_tab: str = "plugins") -> None:
         def _builder(box: Gtk.Box):
             pid = plugin_data.get("id", "plugin")
             pname = plugin_data.get("name", pid)
@@ -2014,10 +2009,11 @@ class SayriCajita(Gtk.Box):
                         s_hint = Gtk.Label()
                         s_hint.set_halign(Gtk.Align.START)
                         s_hint.set_wrap(True)
-                        s_hint.set_markup("<span size='8200' foreground='#94a3b8'>Changes apply the next time the plugin/server starts.</span>")
+                        s_hint.set_markup("<span size='8200' foreground='#94a3b8'>Changes apply immediately.</span>")
                         box.append(s_hint)
 
                         def _save_settings(_b):
+                            cfg = getattr(self.app, "cfg", None)
                             for key, w, opts in list(saved_fields):
                                 try:
                                     if opts is not None:
@@ -2027,12 +2023,19 @@ class SayriCajita(Gtk.Box):
                                     else:
                                         val = w.get_text()
                                     ps.write_setting(manifest, key, str(val))
+                                    if key == "character" and cfg:
+                                        cfg.set("ui.clippy", "character", str(val))
                                 except Exception:
                                     pass
+                            # If this UI is active, restart it with new character/settings
+                            is_ui = manifest.get("type") == "ui" or "ui" in manifest or pid.startswith("sayri-ui-")
+                            if is_ui:
+                                threading.Thread(target=lambda: (os.system(f"sayri ui stop {pid}"), time.sleep(0.3), os.system(f"sayri ui start {pid} &")), daemon=True).start()
                             self._populate_plugins_tools()
-                            self.switch_tab("plugins")
+                            self._populate_settings()
+                            self.switch_tab(on_back_tab)
 
-                        save_ps = Gtk.Button(label="Save plugin settings")
+                        save_ps = Gtk.Button(label="Save Plugin Settings")
                         save_ps.add_css_class("sayri-action-btn")
                         save_ps.add_css_class("primary")
                         save_ps.connect("clicked", _save_settings)
@@ -2082,12 +2085,12 @@ class SayriCajita(Gtk.Box):
                         except Exception:
                             pass
                 self._populate_plugins_tools()
-                self.switch_tab("plugins")
+                self.switch_tab(on_back_tab)
 
             save_btn.connect("clicked", _save)
             box.append(save_btn)
 
-        self.open_subview(f"Configure {plugin_data.get('name', 'Plugin')}", _builder, on_back_tab="plugins")
+        self.open_subview(f"Configure {plugin_data.get('name', 'Plugin')}", _builder, on_back_tab=on_back_tab)
 
     # ── In-Cajita setup wizard (native GTK, renders the xui screen documents
     #    with the Cajita's own design — no HTML/WebKit) ──
@@ -3299,7 +3302,96 @@ class SayriCajita(Gtk.Box):
 
         self.settings_box.append(tts_config_box)
 
-        # Section 4: System Daemons & Process Management
+        # Section 4: Desktop User Interfaces & Companions (UIs)
+        sep_ui = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep_ui.set_margin_top(6)
+        sep_ui.set_margin_bottom(6)
+        self.settings_box.append(sep_ui)
+
+        sec_ui_title = Gtk.Label()
+        sec_ui_title.set_markup("<span weight='700' size='9500' foreground='#1e74fb'>DESKTOP USER INTERFACES &amp; COMPANIONS</span>")
+        sec_ui_title.set_halign(Gtk.Align.START)
+        self.settings_box.append(sec_ui_title)
+
+        from sayri.gateway_supervisor import gateway_supervisor
+        ui_plugins = list(gateway_supervisor.list_installed_uis())
+
+        # Ensure default Orb exists in list
+        has_orb = any(u.get("id") in ("orb", "sayri-ui-orb") for u in ui_plugins)
+        if not has_orb:
+            ui_plugins.insert(0, {
+                "id": "sayri-ui-orb",
+                "name": "Sayri Orb (Floating Bar & Voice Assistant)",
+                "description": "Interactive floating crystal orb and voice assistant with full widget support",
+                "type": "ui",
+                "entrypoint": "",
+            })
+
+        cur_default_ui = cfg.get_string("ui", "default_ui") if cfg else "sayri-ui-orb"
+        if cur_default_ui in ("orb", "desktop", ""):
+            cur_default_ui = "sayri-ui-orb"
+
+        for u in ui_plugins:
+            u_id = u.get("id", "")
+            u_name = u.get("name", u_id)
+            u_desc = u.get("description", "Sayri desktop user interface")
+            is_active_ui = (u_id == cur_default_ui) or (cur_default_ui.endswith(u_id) or u_id.endswith(cur_default_ui))
+
+            u_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            u_card.add_css_class("sayri-card-item")
+
+            u_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            u_row.set_valign(Gtk.Align.CENTER)
+
+            u_lbl = Gtk.Label()
+            u_lbl.set_markup(f"<span foreground='#ffffff' weight='700' size='9500'>{GLib.markup_escape_text(u_name)}</span>")
+            u_lbl.set_halign(Gtk.Align.START)
+            u_lbl.set_hexpand(True)
+            u_row.append(u_lbl)
+
+            if is_active_ui:
+                def_lbl = Gtk.Label()
+                def_lbl.set_markup("<span foreground='#38bdf8' size='8500' weight='600'>★ Active Default</span>")
+                u_row.append(def_lbl)
+
+            # Settings button (e.g. to choose avatar Clippy/Bonzi/Merlin)
+            if u.get("ui", {}).get("settings") or (u.get("path") and (Path(u["path"]) / "manifest.json").is_file()):
+                cfg_btn = Gtk.Button()
+                cfg_btn.set_child(_svg_icon(SVG_SETTINGS))
+                cfg_btn.set_has_frame(False)
+                cfg_btn.add_css_class("sayri-icon-btn")
+                cfg_btn.set_tooltip_text("Configure Interface & Avatar")
+                cfg_btn.connect("clicked", lambda _b, it=u: self.show_edit_plugin_view(it, on_back_tab="settings"))
+                u_row.append(cfg_btn)
+
+            u_sw = Gtk.Switch()
+            u_sw.set_valign(Gtk.Align.CENTER)
+            u_sw.set_active(is_active_ui)
+
+            def _on_ui_toggle(sw, _gparam, target_id=u_id, target_meta=u):
+                active = sw.get_active()
+                if active:
+                    if cfg:
+                        cfg.set_string("ui", "default_ui", target_id)
+                    # Start this UI and stop others
+                    threading.Thread(target=lambda: os.system(f"sayri ui start {target_id} &"), daemon=True).start()
+                else:
+                    threading.Thread(target=lambda: os.system(f"sayri ui stop {target_id} &"), daemon=True).start()
+                GLib.timeout_add(300, lambda: (self._populate_settings(), False))
+
+            u_sw.connect("notify::active", _on_ui_toggle)
+            u_row.append(u_sw)
+            u_card.append(u_row)
+
+            u_desc_lbl = Gtk.Label()
+            u_desc_lbl.set_markup(f"<span foreground='#94a3b8' size='8500'>{GLib.markup_escape_text(u_desc)}</span>")
+            u_desc_lbl.set_halign(Gtk.Align.START)
+            u_desc_lbl.set_wrap(True)
+            u_card.append(u_desc_lbl)
+
+            self.settings_box.append(u_card)
+
+        # Section 5: System Daemons & Process Management
         sys_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         sys_box.add_css_class("sayri-card-item")
         sys_box.set_margin_top(8)
