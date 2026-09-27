@@ -1654,6 +1654,15 @@ class SayriCajita(Gtk.Box):
             cfg_btn.connect("clicked", lambda _b, p=pl: self.show_edit_plugin_view(p))
             header_row.append(cfg_btn)
 
+            # Delete plugin button
+            del_btn = Gtk.Button()
+            del_btn.set_child(_svg_icon(SVG_TRASH))
+            del_btn.set_has_frame(False)
+            del_btn.add_css_class("sayri-icon-btn")
+            del_btn.set_tooltip_text("Uninstall Plugin")
+            del_btn.connect("clicked", lambda _b, p=pl: self.show_delete_plugin_view(p))
+            header_row.append(del_btn)
+
             card.append(header_row)
 
             desc_lbl = Gtk.Label()
@@ -2420,7 +2429,13 @@ class SayriCajita(Gtk.Box):
                 pair_btn.connect("clicked", lambda _b, it=inst, pm=plugin_meta: self.show_generic_otp_pairing_view(pm, instance_id=it["id"]))
                 act_bar.append(pair_btn)
 
-            if sec_key and not has_secret:
+            if sec_key and has_secret:
+                rot_btn = Gtk.Button(label="🔄 Rotate Token")
+                rot_btn.add_css_class("sayri-action-btn")
+                rot_btn.set_tooltip_text("Stop the gateway, invalidate the current token and store a brand new one")
+                rot_btn.connect("clicked", lambda _b, it=inst: self.show_rotate_token_view(it))
+                act_bar.append(rot_btn)
+            elif sec_key and not has_secret:
                 cfg_btn = Gtk.Button(label=f"Set {sec_key}")
                 cfg_btn.add_css_class("sayri-action-btn")
                 cfg_btn.connect("clicked", lambda _b, it=inst: self.show_edit_gateway_view(it))
@@ -3247,10 +3262,57 @@ class SayriCajita(Gtk.Box):
         kill_btn.set_margin_top(4)
 
         def _kill_all_procs(_b):
+            from signal import SIGKILL
+
+            roots = set()
+            buf = {}
             try:
-                subprocess.run(["pkill", "-9", "-f", "gateway.py"], capture_output=True)
-                subprocess.run(["pkill", "-9", "-f", "sayri.indicator"], capture_output=True)
-                subprocess.run(["pkill", "-9", "-f", "python3 -m sayri"], capture_output=True)
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        with open("/proc/" + entry + "/cmdline", "rb") as fh:
+                            raw = fh.read()
+                    except OSError:
+                        continue
+                    cmd = raw.replace(b"\0", b" ").decode("utf-8", "replace")
+                    buf[entry] = cmd
+                for pid, cmd in buf.items():
+                    low = (cmd or "").lower()
+                    if ("sayri" in low or "prismml" in low or "llama-server" in low
+                            or "llama-cli" in low or "llama-bench" in low):
+                        roots.add(pid)
+            except Exception:
+                pass
+
+            try:
+                out = subprocess.check_output(
+                    ["ps", "-eo", "pid=,ppid="], text=True, timeout=10
+                )
+                child = {}
+                for line in out.splitlines():
+                    parts = line.split()
+                    if len(parts) == 2:
+                        child.setdefault(parts[1], []).append(parts[0])
+            except Exception:
+                child = {}
+
+            kill = set(roots)
+            stack = list(roots)
+            while stack:
+                cur = stack.pop()
+                for sub in child.get(cur, []):
+                    if sub not in kill:
+                        kill.add(sub)
+                        stack.append(sub)
+            for pid in kill:
+                try:
+                    os.kill(int(pid), SIGKILL)
+                except (OSError, ValueError):
+                    pass
+            try:
+                subprocess.run(["systemctl", "--user", "stop", "app-sayri@autostart.service"],
+                               capture_output=True, timeout=10)
             except Exception:
                 pass
             os._exit(0)
@@ -3650,6 +3712,158 @@ class SayriCajita(Gtk.Box):
             box.append(save_btn)
 
         self.open_subview(f"Edit {instance_data.get('name')}", _builder, on_back_tab="plugins")
+
+    def show_rotate_token_view(self, instance_data: dict) -> None:
+        def _builder(box: Gtk.Box):
+            from sayri.gateway_supervisor import gateway_supervisor
+
+            inst_id = instance_data["id"]
+            sec_key = instance_data.get("secret_key") or f"TOKEN_{inst_id.upper().replace('-', '_')}"
+
+            warn_lbl = Gtk.Label()
+            warn_lbl.set_halign(Gtk.Align.START)
+            warn_lbl.set_wrap(True)
+            warn_lbl.set_markup(
+                "<span size='9000' foreground='#f59e0b'><b>🔄 Token Rotation</b></span>\n"
+                f"<span size='9000' foreground='#94a3b8'>This will stop the gateway, delete the current <b>{GLib.markup_escape_text(sec_key)}</b> from the Vault "
+                "and replace it with a brand new one.\n\n"
+                "1. Regenerate the token in the Discord Developer Portal.\n"
+                "2. Paste the new token below.\n"
+                "3. The gateway restarts automatically with the new credential.</span>"
+            )
+            warn_lbl.set_margin_bottom(6)
+            box.append(warn_lbl)
+
+            old_lbl = Gtk.Label()
+            old_lbl.set_halign(Gtk.Align.START)
+            has_old = bool(secrets_manager.get_secret(sec_key))
+            old_lbl.set_markup(
+                "<span size='9000' foreground='#10b981'>● Current token present in Vault</span>" if has_old
+                else "<span size='9000' foreground='#ef4444'>● No token stored — you are adding a new one</span>"
+            )
+            box.append(old_lbl)
+
+            tok_lbl = Gtk.Label(label=f"New Bot Token ({sec_key}):")
+            tok_lbl.set_halign(Gtk.Align.START)
+            tok_lbl.set_margin_top(6)
+            box.append(tok_lbl)
+
+            tok_entry = Gtk.Entry()
+            tok_entry.set_visibility(False)
+            tok_entry.set_placeholder_text("Paste the newly generated token…")
+            tok_entry.add_css_class("sayri-settings-entry")
+            box.append(tok_entry)
+
+            status_lbl = Gtk.Label()
+            status_lbl.set_halign(Gtk.Align.START)
+            status_lbl.set_wrap(True)
+            box.append(status_lbl)
+
+            rotate_btn = Gtk.Button(label="Rotate Token")
+            rotate_btn.add_css_class("sayri-action-btn")
+            rotate_btn.add_css_class("primary")
+            rotate_btn.set_margin_top(6)
+
+            def _do_rotate(_b):
+                new_tok = tok_entry.get_text().strip()
+                if not new_tok:
+                    status_lbl.set_markup("<span foreground='#ef4444' size='9000'>Paste the new token first.</span>")
+                    return
+                was_running = gateway_supervisor.is_instance_running(inst_id)
+                # Stop the gateway so the old credential cannot keep being used
+                gateway_supervisor.stop_instance(inst_id)
+                # Remove the old secret and store the new one
+                secrets_manager.delete_secret(sec_key)
+                secrets_manager.set_secret(sec_key, new_tok, f"Token for {instance_data.get('name')} (rotated)")
+                rotate_btn.set_sensitive(False)
+                status_lbl.set_markup("<span foreground='#38bdf8' size='9000'>Restarting gateway with the new token…</span>")
+
+                def _thread():
+                    if was_running:
+                        ok, msg = gateway_supervisor.start_instance(inst_id)
+                    else:
+                        ok, msg = True, "Gateway stopped (start it when ready)."
+                    GLib.idle_add(lambda: self._rotate_done(status_lbl, rotate_btn, ok, msg))
+
+                threading.Thread(target=_thread, daemon=True).start()
+
+            rotate_btn.connect("clicked", _do_rotate)
+            box.append(rotate_btn)
+
+            back_btn = Gtk.Button(label="Back")
+            back_btn.add_css_class("sayri-action-btn")
+            back_btn.connect("clicked", lambda _b: self.switch_tab("plugins"))
+            back_btn.set_margin_top(2)
+            box.append(back_btn)
+
+        self.open_subview(f"Rotate Token — {instance_data.get('name')}", _builder, on_back_tab="plugins")
+
+    def _rotate_done(self, status_lbl: Gtk.Label, rotate_btn: Gtk.Button, ok: bool, msg: str) -> None:
+        if ok:
+            status_lbl.set_markup(f"<span foreground='#22c55e' size='9000'>✓ Token rotated and gateway restarted.</span>")
+        else:
+            status_lbl.set_markup(f"<span foreground='#ef4444' size='9000'>✗ Rotation done, but restart failed: {GLib.markup_escape_text(msg)}</span>")
+        rotate_btn.set_sensitive(True)
+        self._populate_plugins()
+        self.switch_tab("plugins")
+
+    def show_delete_plugin_view(self, plugin_data: dict) -> None:
+        def _builder(box: Gtk.Box):
+            from sayri.gateway_supervisor import gateway_supervisor
+
+            pid = plugin_data.get("id", "plugin")
+            pname = plugin_data.get("name", pid)
+
+            warn_lbl = Gtk.Label()
+            warn_lbl.set_halign(Gtk.Align.START)
+            warn_lbl.set_wrap(True)
+            warn_lbl.set_markup(
+                f"<span size='9000' foreground='#ef4444'><b>🗑️ Uninstall {GLib.markup_escape_text(pname)}</b></span>\n"
+                "<span size='9000' foreground='#94a3b8'>This permanently removes the plugin directory, "
+                "stops and deletes its gateway instances, and scrubs the associated tokens from the Vault. "
+                "You can reinstall it later from the Pulsar Store.</span>"
+            )
+            warn_lbl.set_margin_bottom(6)
+            box.append(warn_lbl)
+
+            status_lbl = Gtk.Label()
+            status_lbl.set_halign(Gtk.Align.START)
+            status_lbl.set_wrap(True)
+            box.append(status_lbl)
+
+            del_btn = Gtk.Button(label="Yes, uninstall plugin")
+            del_btn.add_css_class("sayri-action-btn")
+            del_btn.set_margin_top(6)
+
+            def _do_delete(_b):
+                del_btn.set_sensitive(False)
+                status_lbl.set_markup("<span foreground='#38bdf8' size='9000'>Uninstalling…</span>")
+
+                def _thread():
+                    ok, msg = gateway_supervisor.uninstall_plugin(pid)
+                    GLib.idle_add(lambda: self._delete_plugin_done(status_lbl, del_btn, ok, msg))
+
+                threading.Thread(target=_thread, daemon=True).start()
+
+            del_btn.connect("clicked", _do_delete)
+            box.append(del_btn)
+
+            back_btn = Gtk.Button(label="Cancel")
+            back_btn.add_css_class("sayri-action-btn")
+            back_btn.connect("clicked", lambda _b: self.switch_tab("plugins"))
+            back_btn.set_margin_top(2)
+            box.append(back_btn)
+
+        self.open_subview(f"Uninstall {plugin_data.get('name')}", _builder, on_back_tab="plugins")
+
+    def _delete_plugin_done(self, status_lbl: Gtk.Label, del_btn: Gtk.Button, ok: bool, msg: str) -> None:
+        if ok:
+            status_lbl.set_markup(f"<span foreground='#22c55e' size='9000'>✓ {GLib.markup_escape_text(msg)}</span>")
+        else:
+            status_lbl.set_markup(f"<span foreground='#ef4444' size='9000'>✗ {GLib.markup_escape_text(msg)}</span>")
+        del_btn.set_sensitive(True)
+        self._populate_plugins()
+        self.switch_tab("plugins")
 
     def show_generic_otp_pairing_view(self, plugin_meta: dict, instance_id: str = "default") -> None:
         def _builder(box: Gtk.Box):
@@ -4250,7 +4464,11 @@ class SayriCajita(Gtk.Box):
         self._live_text = text
         self.entry.set_text("")
         _safe_set_markup(self.response_label, text)
-        if self.card_stack.get_visible_child_name() != "chat":
+        # While first-run setup is pending the card must keep showing the
+        # wizard, never be yanked back to chat (that killed the welcome after
+        # the app booted / on every reappindicator reopen).
+        if (self.card_stack.get_visible_child_name() != "chat"
+                and not getattr(self.app, "_setup_needed", False)):
             self.switch_tab("chat", trigger_effect=False)
         self.card_overlay.set_visible(True)
         # Settle pill animation and transfer to card

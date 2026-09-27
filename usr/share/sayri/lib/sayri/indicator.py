@@ -47,6 +47,23 @@ def _ensure_local_icon() -> None:
                     pass
 
 
+def is_gui_running() -> bool:
+    sock_path = os.path.join(paths.state_dir(), "sayri.sock")
+    if not os.path.exists(sock_path):
+        return False
+    try:
+        import socket
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        s.connect(sock_path)
+        s.sendall(b"sayri-gui-ping\n")
+        reply = s.recv(64).strip().upper()
+        s.close()
+        return reply.startswith(b"GUI")
+    except Exception:
+        return False
+
+
 def send_sock_command(cmd: str) -> bool:
     sock_path = os.path.join(paths.state_dir(), "sayri.sock")
     if not os.path.exists(sock_path):
@@ -77,12 +94,16 @@ class SayriIndicator:
     def _create_menu(self) -> None:
         self.menu = Gtk.Menu()
 
-        # When the user clicks the tray icon, immediately toggle Sayri and dismiss the menu popup
-        self.menu.connect("show", lambda m: (self._on_toggle_sayri(), GLib.idle_add(m.popdown)))
-
         self.toggle_item = Gtk.MenuItem(label="Sayri")
         self.toggle_item.connect("activate", self._on_toggle_sayri)
         self.menu.append(self.toggle_item)
+
+        sep = Gtk.SeparatorMenuItem()
+        self.menu.append(sep)
+
+        self.quit_item = Gtk.MenuItem(label="Exit")
+        self.quit_item.connect("activate", self._on_quit)
+        self.menu.append(self.quit_item)
 
         self.menu.show_all()
 
@@ -97,6 +118,10 @@ class SayriIndicator:
             self.indicator.set_title("Sayri")
             self.indicator.set_menu(self.menu)
             self.indicator.set_secondary_activate_target(self.toggle_item)
+            try:
+                self.indicator.connect("activate", lambda _i, _x, _y: self._on_toggle_sayri())
+            except Exception:
+                pass
         else:
             self.status_icon = Gtk.StatusIcon.new_from_icon_name("sayri-tray")
             self.status_icon.set_tooltip_text("Sayri Voice Assistant")
@@ -104,20 +129,26 @@ class SayriIndicator:
             self.status_icon.connect("activate", lambda _i: self._on_toggle_sayri(None))
 
     def _on_toggle_sayri(self, _item=None) -> None:
-        if not send_sock_command("toggle"):
+        if is_gui_running():
+            send_sock_command("toggle")
+        else:
             self._ensure_sayri()
 
     def _on_listen(self, _item=None) -> None:
-        if not send_sock_command("listen"):
+        if is_gui_running():
+            send_sock_command("listen")
+        else:
             self._ensure_sayri()
 
     def _ensure_sayri(self) -> None:
         if self._sayri_proc and self._sayri_proc.poll() is None:
-            return
+            if is_gui_running():
+                send_sock_command("show")
+                return
         env = dict(os.environ)
         lib_path = os.path.dirname(os.path.dirname(__file__))
         env["PYTHONPATH"] = lib_path + (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
-        self._sayri_proc = subprocess.Popen([sys.executable, "-m", "sayri"], env=env)
+        self._sayri_proc = subprocess.Popen([sys.executable, "-m", "sayri", "--toggle"], env=env)
 
     def _on_open_settings(self, _item=None) -> None:
         if self._settings_proc and self._settings_proc.poll() is None:

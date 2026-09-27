@@ -453,7 +453,7 @@ class SayriDaemon:
                     instance_id=str(msg.get("instance_id", "default")),
                     session_id=msg.get("session_id"),
                 )
-                reply = json.dumps({"ok": True, "text": result})
+                reply = json.dumps({"ok": True, "event": "done", "text": result})
                 conn.sendall((reply + "\n").encode("utf-8"))
                 return
             if mtype in ("ATTACH_IMAGE", "attach"):
@@ -462,8 +462,19 @@ class SayriDaemon:
                     self.server.broadcast("attach_image", path=str(img_path))
                 conn.sendall(b"OK\n")
                 return
+        elif raw == "sayri-gui-ping":
+            conn.sendall(b"DAEMON\n")
+            return
         elif raw == "toggle":
-            self.core.toggle_listening()
+            if self.server.client_count() > 0:
+                self.server.broadcast("toggle")
+            else:
+                import subprocess
+                import sys
+                env = dict(os.environ)
+                lib_path = os.path.dirname(os.path.dirname(__file__))
+                env["PYTHONPATH"] = lib_path + (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
+                subprocess.Popen([sys.executable, "-m", "sayri", "--toggle"], env=env)
         elif raw == "show":
             self.server.broadcast("show")
         elif raw == "hide":

@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX
+    fcntl = None  # type: ignore[assignment]
 
 from sayri import paths, sysinfo
 from sayri.domain.secrets_manager import secrets_manager
@@ -145,6 +151,41 @@ class GatewaySupervisor:
             instances.append(instance_data)
         self._save_instances_to_disk(instances)
 
+    def uninstall_plugin(self, plugin_id: str, remove_secrets: bool = True) -> Tuple[bool, str]:
+        """Stops, deletes configured instances, removes the plugin directory and
+        optionally scrubs its secrets from the Zero-Plaintext Vault."""
+        plugin_dir = self.find_gateway_plugin_dir(plugin_id)
+
+        instance_ids: List[str] = []
+        secret_keys: set = set()
+        for inst in self.list_instances():
+            if inst.get("plugin_id", inst.get("id")) == plugin_id:
+                instance_ids.append(inst["id"])
+                sk = inst.get("secret_key")
+                if sk:
+                    secret_keys.add(str(sk).strip())
+
+        for iid in instance_ids:
+            self.delete_instance(iid)
+
+        if plugin_dir is None or not plugin_dir.is_dir():
+            return False, f"Plugin '{plugin_id}' is not installed."
+
+        try:
+            shutil.rmtree(plugin_dir)
+        except OSError as exc:
+            return False, f"Failed to remove plugin directory: {exc}"
+
+        removed_secrets: List[str] = []
+        if remove_secrets:
+            for sk in sorted(secret_keys):
+                if secrets_manager.delete_secret(sk):
+                    removed_secrets.append(sk)
+
+        print(f"[Supervisor] 🗑️ Uninstalled plugin '{plugin_id}' "
+              f"(instances: {len(instance_ids)}, secrets scrubbed: {len(removed_secrets)})")
+        return True, f"Plugin '{plugin_id}' removed."
+
     def delete_instance(self, instance_id: str) -> None:
         """Stops and deletes a gateway instance."""
         self.stop_instance(instance_id)
@@ -158,6 +199,16 @@ class GatewaySupervisor:
                 return True
             else:
                 self._processes.pop(instance_id, None)
+        pid_file = Path(paths.config_dir()) / f"gateway_{instance_id}.pid"
+        if pid_file.is_file():
+            try:
+                pid = int(pid_file.read_text().strip())
+                if pid != os.getpid() and sysinfo.process_alive(pid):
+                    return True
+                else:
+                    pid_file.unlink(missing_ok=True)
+            except Exception:
+                pass
         return False
 
     def is_running(self, gw_id: str) -> bool:
@@ -186,6 +237,7 @@ class GatewaySupervisor:
 
         # Stop existing instance process if running
         self.stop_instance(instance_id)
+        time.sleep(0.3)
 
         # Prepare instance environment with Vault secrets dynamically from manifest
         env = os.environ.copy()
@@ -273,8 +325,19 @@ class GatewaySupervisor:
         if pid_file.is_file():
             try:
                 old_pid = int(pid_file.read_text().strip())
-                if old_pid != os.getpid():
+                if old_pid != os.getpid() and sysinfo.process_alive(old_pid):
                     sysinfo.terminate_pid(old_pid)
+                    for _ in range(20):
+                        if not sysinfo.process_alive(old_pid):
+                            break
+                        time.sleep(0.1)
+                    if sysinfo.process_alive(old_pid):
+                        import signal
+                        try:
+                            sysinfo.send_signal(old_pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+                pid_file.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -283,15 +346,39 @@ class GatewaySupervisor:
         self.stop_instance(gw_id)
 
     def auto_start_all(self) -> None:
-        """Auto-starts all enabled gateway instances with present credentials."""
-        for inst in self.list_instances():
-            if not inst.get("enabled", True):
-                continue
-            sec_key = inst.get("secret_key", "")
-            if sec_key:
-                has_sec = bool(secrets_manager.get_secret(sec_key) or sec_key in os.environ)
-                if has_sec:
-                    self.start_instance(inst["id"])
+        """Auto-starts all enabled gateway instances with present credentials.
+
+        Guarded by an exclusive process lock so the GUI launcher and the daemon
+        (both child processes that can call this) never double-spawn the same
+        instance.
+        """
+        lock_path = Path(paths.config_dir()) / "gateway_supervisor.lock"
+        try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        except OSError:
+            fd = -1
+        if fd >= 0 and fcntl is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                return  # another supervisor (launcher or daemon) is auto-starting
+        try:
+            for inst in self.list_instances():
+                if not inst.get("enabled", True):
+                    continue
+                sec_key = inst.get("secret_key", "")
+                if sec_key:
+                    has_sec = bool(secrets_manager.get_secret(sec_key) or sec_key in os.environ)
+                    if has_sec:
+                        self.start_instance(inst["id"])
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 gateway_supervisor = GatewaySupervisor.get_instance()

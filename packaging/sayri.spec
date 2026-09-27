@@ -52,7 +52,9 @@ a settings window. Speech and transcription models run 100% locally.
 rm -rf %{buildroot}
 install -d %{buildroot}
 cp -a usr %{buildroot}/
-cp -a etc %{buildroot}/
+if [ -d etc ]; then
+    cp -a etc %{buildroot}/
+fi
 
 # Ensure binaries are executable.
 chmod 0755 %{buildroot}/usr/bin/sayri
@@ -63,8 +65,7 @@ chmod 0755 %{buildroot}/usr/bin/sayri-plugins
 
 %files
 %doc README.md
-%dir %{_datadir}/sayri
-%{_datadir}/sayri/*
+%{_datadir}/sayri
 %{_datadir}/applications/sayri.desktop
 %{_datadir}/icons/hicolor/*
 %{_datadir}/pixmaps/sayri.png
@@ -74,8 +75,6 @@ chmod 0755 %{buildroot}/usr/bin/sayri-plugins
 %{_bindir}/sayri-settings
 %{_bindir}/sayri-skills
 %{_bindir}/sayri-plugins
-%dir %{_sysconfdir}/xdg/autostart
-%config(noreplace) %{_sysconfdir}/xdg/autostart/sayri.desktop
 
 %post
 # Refresh the hicolor icon theme cache so the Sayri icon shows up in menus.

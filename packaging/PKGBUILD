@@ -32,13 +32,16 @@ optdepends=(
     'xdg-utils: open URLs in browser'
     'libayatana-appindicator: system tray indicator'
 )
-source=('usr.tar.gz' 'etc.tar.gz' 'README.md')
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+source=('usr.tar.gz' 'README.md')
+sha256sums=('SKIP' 'SKIP')
 
 package() {
-    install -d "$pkgdir/usr" "$pkgdir/etc"
+    install -d "$pkgdir/usr"
     cp -a usr/. "$pkgdir/usr/"
-    cp -a etc/. "$pkgdir/etc/"
+    if [ -d etc ]; then
+        install -d "$pkgdir/etc"
+        cp -a etc/. "$pkgdir/etc/"
+    fi
 
     chmod 0755 \
         "$pkgdir/usr/bin/sayri" \

@@ -200,10 +200,10 @@ class SayriApp(Gtk.Application):
         if self._setup_needed:
             self._show_setup_prompt()
             self.overlay.show()
-            # On a genuine first run open the full wizard window (CLI & GUI
-            # share the same host logic in wizard.py / xui.py).
-            if is_first_run and not setup_done:
-                GLib.idle_add(self.open_wizard)
+            # Setup is pending: open the wizard on a genuine first run AND on
+            # every boot where no provider is configured yet (CLI & GUI share
+            # the same host logic in wizard.py / xui.py).
+            GLib.idle_add(self.open_wizard)
         else:
             if not self.is_autostart:
                 self.overlay.show()
@@ -496,12 +496,11 @@ class SayriApp(Gtk.Application):
         """Called when Sayri is shown: clean UI, play activation sound, and start listening."""
         print("[Sayri] Overlay shown: cleaning UI and playing activation sound.")
         if self._setup_needed:
-            # Setup not finished yet: keep the setup message visible and do not
-            # wipe it or start listening until an AI provider is configured.
-            # Re-show the welcome so reopening from the appindicator keeps it.
+            # Setup not finished yet: keep the welcome wizard visible (resuming
+            # it where it left off) instead of wiping it or starting to listen,
+            # until an AI provider is configured / the setup wizard completes.
             self._show_setup_prompt()
-            if self.overlay:
-                self.overlay.cajita.card_overlay.set_visible(True)
+            self._show_wizard_view()
             return
         self._current_query_id += 1
         self.tts.cancel()
@@ -1069,19 +1068,29 @@ class SayriApp(Gtk.Application):
             self.settings_win.show()
 
     def open_wizard(self) -> None:
-        """Open (or focus) the welcome wizard window (xui, shared with the CLI)."""
-        try:
-            from . import xui_window
-        except Exception as exc:  # noqa: BLE001
-            print(f"[Sayri] wizard not available: {exc}")
+        """Open the welcome wizard inside the Cajita (native GTK, no HTML window).
+
+        The first-run flow, every boot with no provider configured, and the
+        settings entry point all render the same xui host (wizard.py) through
+        the Cajita's own wizard view — never a separate WebKit window.
+        """
+        if self.overlay is None or not hasattr(self.overlay, "cajita") or not self.overlay.cajita:
+            print("[Sayri] wizard not available: no cajita overlay")
             self._show_setup_prompt()
             return
-        win = getattr(self, "_wizard_win", None)
-        if win is not None and win.is_visible():
-            win.present()
+        self.overlay.show()
+        self._show_wizard_view()
+
+    def _show_wizard_view(self) -> None:
+        """Switch the Cajita to the embedded setup wizard, resuming it if already open."""
+        caj = (self.overlay.cajita if self.overlay and hasattr(self.overlay, "cajita")
+               and self.overlay.cajita else None)
+        if caj is None:
             return
-        self._wizard_win = xui_window.open_wizard(self)
-        self._wizard_win.present()
+        if (caj.card_stack.get_visible_child_name() != "wizard"
+                or getattr(caj, "_wizard_host", None) is None):
+            caj.switch_tab("wizard", trigger_effect=False)
+        caj.card_overlay.set_visible(True)
 
     def refresh_status(self) -> None:
         if self.settings_win is not None:
@@ -1106,6 +1115,12 @@ class SayriApp(Gtk.Application):
         if group == "ui":
             if key == "autostart":
                 self.apply_autostart()
+            elif key == "setup_complete":
+                # Finishing (or skipping) the setup wizard counts as done too.
+                if self.cfg.get_bool("ui", "setup_complete") and self._setup_needed:
+                    self._setup_needed = False
+                    self._set_busy(False)
+                    self._after_reply()
             else:
                 self.apply_ui_config()
         elif group == "stt" and key == "mode":

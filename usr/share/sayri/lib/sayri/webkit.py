@@ -26,6 +26,8 @@ import urllib.parse
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("Gio", "2.0")
 gi.require_version("WebKit", "6.0")
 
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit  # noqa: E402
@@ -52,6 +54,106 @@ def layer_supported() -> bool:
     return LAYER_OK and (LayerShell is not None and LayerShell.is_supported())
 
 
+def get_primary_connector_gnome() -> str | None:
+    """Query GNOME Mutter DBus for the configured primary monitor connector name."""
+    try:
+        from gi.repository import Gio
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        proxy = Gio.DBusProxy.new_sync(
+            bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.gnome.Mutter.DisplayConfig",
+            "/org/gnome/Mutter/DisplayConfig",
+            "org.gnome.Mutter.DisplayConfig",
+            None,
+        )
+        state = proxy.GetCurrentState()
+        # state[2] is list of logical monitors: (x, y, scale, transform, primary, outputs, props)
+        for mon in state[2]:
+            if mon[4]:  # primary == True
+                outputs = mon[5]
+                if outputs and len(outputs) > 0 and len(outputs[0]) > 0:
+                    return str(outputs[0][0])
+    except Exception:
+        pass
+    return None
+
+
+def get_primary_geometry_gnome() -> tuple[int, int, int, int] | None:
+    """Query GNOME Mutter DBus for the configured primary monitor (x, y, width, height)."""
+    try:
+        from gi.repository import Gio
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        proxy = Gio.DBusProxy.new_sync(
+            bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.gnome.Mutter.DisplayConfig",
+            "/org/gnome/Mutter/DisplayConfig",
+            "org.gnome.Mutter.DisplayConfig",
+            None,
+        )
+        state = proxy.GetCurrentState()
+        mode_map = {}
+        for out in state[1]:
+            name = out[0][0]
+            modes = out[1]
+            for m in modes:
+                if len(m) > 6 and m[6].get("is-current", False):
+                    mode_map[name] = (m[1], m[2])
+                    break
+
+        for mon in state[2]:
+            if mon[4]:  # primary == True
+                lx, ly, lscale = int(mon[0]), int(mon[1]), float(mon[2])
+                outputs = mon[5]
+                w, h = 1920, 1080
+                if outputs and len(outputs) > 0 and len(outputs[0]) > 0:
+                    conn_name = str(outputs[0][0])
+                    if conn_name in mode_map:
+                        mw, mh = mode_map[conn_name]
+                        w = int(mw / lscale) if lscale > 0 else mw
+                        h = int(mh / lscale) if lscale > 0 else mh
+                return (lx, ly, w, h)
+    except Exception:
+        pass
+    return None
+
+
+def get_primary_monitor_gdk() -> Gdk.Monitor | None:
+    """Return the primary Gdk.Monitor or the best fallback (containing 0,0 or item 0)."""
+    try:
+        display = Gdk.Display.get_default()
+        if not display:
+            return None
+        monitors = display.get_monitors()
+        if not monitors or monitors.get_n_items() == 0:
+            return None
+        if monitors.get_n_items() == 1:
+            return monitors.get_item(0)
+
+        # 1. Match against GNOME Mutter primary connector
+        primary_conn = get_primary_connector_gnome()
+        if primary_conn:
+            for i in range(monitors.get_n_items()):
+                m = monitors.get_item(i)
+                if m.get_connector() == primary_conn:
+                    return m
+
+        # 2. Check for monitor at logical 0, 0
+        for i in range(monitors.get_n_items()):
+            m = monitors.get_item(i)
+            geom = m.get_geometry()
+            if geom.x == 0 and geom.y == 0:
+                return m
+
+        # 3. Fallback: first monitor
+        return monitors.get_item(0)
+    except Exception:
+        return None
+
+
 def pin_layer_shell(win: Gtk.Window, *, top_margin: int = 12,
                     left_margin: int | None = None,
                     right_margin: int | None = None,
@@ -67,6 +169,12 @@ def pin_layer_shell(win: Gtk.Window, *, top_margin: int = 12,
         ok = LayerShell.init_for_window(win)
         if not ok:
             return False
+
+        # Anchor explicitly to the primary monitor in multi-display setups
+        primary_mon = get_primary_monitor_gdk()
+        if primary_mon is not None:
+            LayerShell.set_monitor(win, primary_mon)
+
         LayerShell.set_layer(win, LayerShell.Layer.OVERLAY)
         LayerShell.set_anchor(win, LayerShell.Edge.TOP, True)
         if left_margin is not None:
@@ -128,9 +236,25 @@ class _XEvent(ctypes.Union):
     ]
 
 
+class _XRRMonitorInfo(ctypes.Structure):
+    _fields_ = [
+        ("name", ctypes.c_ulong),
+        ("primary", ctypes.c_int),
+        ("automatic", ctypes.c_int),
+        ("noutput", ctypes.c_int),
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+        ("width", ctypes.c_int),
+        ("height", ctypes.c_int),
+        ("mwidth", ctypes.c_int),
+        ("mheight", ctypes.c_int),
+        ("outputs", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
 def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
                    right_margin: int = 16, width: int, height: int) -> bool:
-    """Position an X11/XWayland window at the top-right corner, always on top."""
+    """Position an X11/XWayland window at the top-right corner of the PRIMARY monitor."""
     try:
         libx11 = ctypes.cdll.LoadLibrary("libX11.so.6")
         libx11.XInitThreads()
@@ -158,9 +282,36 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
             ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(_XEvent)
         ]
         libx11.XSendEvent.restype = ctypes.c_int
+        libx11.XGetGeometry.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint)
+        ]
+        libx11.XGetGeometry.restype = ctypes.c_int
+        libx11.XQueryPointer.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_uint)
+        ]
+        libx11.XQueryPointer.restype = ctypes.c_int
     except Exception as exc:  # noqa: BLE001
         print(f"[sayri] warning: libX11 not available: {exc}")
         return False
+
+    libxrandr = None
+    try:
+        libxrandr = ctypes.cdll.LoadLibrary("libXrandr.so.2")
+        libxrandr.XRRGetMonitors.restype = ctypes.POINTER(_XRRMonitorInfo)
+        libxrandr.XRRGetMonitors.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.POINTER(ctypes.c_int)
+        ]
+        libxrandr.XRRFreeMonitors.argtypes = [ctypes.POINTER(_XRRMonitorInfo)]
+    except Exception:
+        pass
 
     def _apply_position(*_args) -> None:
         try:
@@ -183,34 +334,118 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
             if not dpy:
                 return
 
-            display = Gdk.Display.get_default()
-            monitors = display.get_monitors() if display else None
-            mon = monitors.get_item(0) if (monitors and monitors.get_n_items() > 0) else None
-            if mon:
-                geom = mon.get_geometry()
-                screen_x = geom.x
-                screen_y = geom.y
-                screen_w = geom.width
-            else:
-                screen_x = 0
-                screen_y = 0
-                screen_w = 1920
+            root = libx11.XDefaultRootWindow(dpy)
 
-            x = max(screen_x, screen_x + screen_w - width - right_margin)
-            y = screen_y + top_margin
+            # Determine monitor geometry in exact X11 root window pixels
+            mon_x, mon_y, mon_w, mon_h = 0, 0, 1920, 1080
+            found_mon = False
+
+            # 1. First Priority: Native XRandR monitor geometry (matches X11/XWayland root coordinate space)
+            if libxrandr:
+                nmon = ctypes.c_int()
+                mons = libxrandr.XRRGetMonitors(dpy, root, 1, ctypes.byref(nmon))
+                if mons and nmon.value > 0:
+                    target_m = None
+                    
+                    # A. Priority 1: Monitor containing the pointer / active workspace
+                    root_ret, child_ret = ctypes.c_ulong(), ctypes.c_ulong()
+                    rx, ry, wx, wy = ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+                    mask = ctypes.c_uint()
+                    if libx11.XQueryPointer(dpy, root, ctypes.byref(root_ret), ctypes.byref(child_ret),
+                                            ctypes.byref(rx), ctypes.byref(ry), ctypes.byref(wx), ctypes.byref(wy),
+                                            ctypes.byref(mask)):
+                        for i in range(nmon.value):
+                            m = mons[i]
+                            if m.x <= rx.value < m.x + m.width and m.y <= ry.value < m.y + m.height:
+                                target_m = m
+                                break
+
+                    # B. Priority 2: explicitly designated primary monitor
+                    if not target_m:
+                        for i in range(nmon.value):
+                            if mons[i].primary:
+                                target_m = mons[i]
+                                break
+
+                    # C. Priority 3: monitor at (0, 0)
+                    if not target_m:
+                        for i in range(nmon.value):
+                            if mons[i].x == 0 and mons[i].y == 0:
+                                target_m = mons[i]
+                                break
+
+                    # D. Fallback: first monitor
+                    if not target_m:
+                        target_m = mons[0]
+
+                    mon_x = target_m.x
+                    mon_y = target_m.y
+                    mon_w = target_m.width
+                    mon_h = target_m.height
+                    found_mon = True
+                    libxrandr.XRRFreeMonitors(mons)
+
+            # 2. Fallback: GNOME Mutter DBus if XRandR unavailable
+            if not found_mon:
+                p_geom = get_primary_geometry_gnome()
+                if p_geom:
+                    mon_x, mon_y, mon_w, mon_h = p_geom
+                    found_mon = True
+
+            # 3. Fallback: GDK Monitor
+            if not found_mon:
+                gdk_mon = get_primary_monitor_gdk()
+                if gdk_mon:
+                    geom = gdk_mon.get_geometry()
+                    scale = gdk_mon.get_scale_factor() or 1
+                    mon_x = geom.x * scale
+                    mon_y = geom.y * scale
+                    mon_w = geom.width * scale
+                    mon_h = geom.height * scale
+                else:
+                    mon_x, mon_y, mon_w, mon_h = 0, 0, 1920, 1080
+
+            # Determine actual window size in X11 device pixels
+            x_geom_root = ctypes.c_ulong()
+            win_x, win_y = ctypes.c_int(), ctypes.c_int()
+            win_w, win_h = ctypes.c_uint(), ctypes.c_uint()
+            border_w, depth = ctypes.c_uint(), ctypes.c_uint()
+            actual_w = 0
+            actual_h = 0
+            if libx11.XGetGeometry(dpy, xid, ctypes.byref(x_geom_root), ctypes.byref(win_x), ctypes.byref(win_y),
+                                   ctypes.byref(win_w), ctypes.byref(win_h), ctypes.byref(border_w), ctypes.byref(depth)):
+                actual_w = win_w.value
+                actual_h = win_h.value
+
+            scale = 1.0
+            if surface:
+                try:
+                    scale = float(surface.get_scale())
+                except Exception:
+                    pass
+
+            if actual_w <= 0:
+                actual_w = int(width * scale)
+            if actual_h <= 0:
+                actual_h = int(height * scale)
+
+            rm_px = int(right_margin * scale)
+            tm_px = int(top_margin * scale)
+
+            x = max(mon_x, mon_x + mon_w - actual_w - rm_px)
+            y = mon_y + tm_px
 
             # 1. Set WM_NORMAL_HINTS with USPosition (1) | USSize (2) | PPosition (4) | PSize (8)
-            # This tells Mutter / EWMH that the position is user-defined and prevents auto-centering.
             hints = _XSizeHints()
             hints.flags = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3)
             hints.x = x
             hints.y = y
-            hints.width = width
-            hints.height = height
+            hints.width = actual_w
+            hints.height = actual_h
             libx11.XSetWMNormalHints(dpy, xid, ctypes.byref(hints))
 
-            # 2. Direct MoveResize
-            libx11.XMoveResizeWindow(dpy, xid, x, y, width, height)
+            # 2. Direct MoveResize in X11 root coordinates
+            libx11.XMoveResizeWindow(dpy, xid, x, y, actual_w, actual_h)
 
             XA_ATOM = 4
             net_wm_state = libx11.XInternAtom(dpy, b"_NET_WM_STATE", 0)
@@ -237,7 +472,6 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
             )
 
             # Send EWMH ClientMessage to Root Window to notify Mutter window manager
-            root = libx11.XDefaultRootWindow(dpy)
             mask = 0x00100000 | 0x00080000  # SubstructureRedirectMask | SubstructureNotifyMask
 
             ev = _XEvent()
@@ -271,8 +505,8 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
             ev_mr.xclient.data_l[0] = 0x0F00 | (1 << 12)
             ev_mr.xclient.data_l[1] = x
             ev_mr.xclient.data_l[2] = y
-            ev_mr.xclient.data_l[3] = width
-            ev_mr.xclient.data_l[4] = height
+            ev_mr.xclient.data_l[3] = actual_w
+            ev_mr.xclient.data_l[4] = actual_h
             libx11.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev_mr))
 
             libx11.XRaiseWindow(dpy, xid)
@@ -563,19 +797,12 @@ class WebWindow:
 
 
 def primary_geometry() -> tuple[int, int, int, int]:
-    """Return (x, y, w, h) of the primary/active monitor (first, on the
-    display the app is on)."""
+    """Return (x, y, w, h) of the primary/active monitor in logical pixels."""
     try:
-        display = Gdk.Display.get_default()
-        if display is None:
-            return (0, 0, 1920, 1080)
-        monitors = display.get_monitors()
-        mon = None
-        if monitors and monitors.get_n_items() > 0:
-            mon = monitors.get_item(0)
-        if mon is None:
-            return (0, 0, 1920, 1080)
-        g = mon.get_geometry()
-        return g.x, g.y, g.width, g.height
+        mon = get_primary_monitor_gdk()
+        if mon is not None:
+            g = mon.get_geometry()
+            return g.x, g.y, g.width, g.height
+        return (0, 0, 1920, 1080)
     except Exception:  # noqa: BLE001
         return (0, 0, 1920, 1080)
