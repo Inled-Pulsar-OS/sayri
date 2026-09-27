@@ -87,9 +87,14 @@ build_rpm() {
         --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
         -cf "$rpmbuilddir/SOURCES/sayri-$VERSION.tar.gz" \
         "${tar_sources[@]}"
-    rpmbuild --define "_topdir $rpmbuilddir" \
-             --define "sayri_version $VERSION" \
-             -bb "$HERE/sayri.spec"
+    # The version is stamped into a copy of the spec rather than passed as a
+    # macro. A macro the spec declares itself wins over one given with --define,
+    # so the stamp has to be a rewrite to be reliable — and rewriting the one
+    # line keeps the spec's own %{version} references (Source0, %setup) working
+    # without any of that.
+    local spec="$rpmbuilddir/sayri.spec"
+    sed -E "s/^Version:.*/Version:        $VERSION/" "$HERE/sayri.spec" > "$spec"
+    rpmbuild --define "_topdir $rpmbuilddir" -bb "$spec"
     cp "$rpmbuilddir"/RPMS/noarch/sayri-*.rpm "$DIST/" 2>/dev/null \
         || cp "$rpmbuilddir"/RPMS/*/sayri-*.rpm "$DIST/"
     rm -rf "$rpmbuilddir"

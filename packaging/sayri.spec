@@ -4,19 +4,23 @@
 #   rpmbuild -bb packaging/sayri.spec
 # ==============================================================================
 
-# The version the build script passes with --define wins over this default; a
-# plain `rpmbuild -bb packaging/sayri.spec` still works and gets the default.
-# It used to be a bare `%global sayri_version`, which rpm resolves *after* any
-# --define from the command line, so the spec's own value silently won: the
-# build asked for sayri-0.1.3.tar.gz while the script had written
-# sayri-0.1.36.tar.gz, and the rpm failed in %prep on every version above
-# 0.1.3. There is no .rpm in dist/ to show for it.
-%global sayri_fallback_version 0.1.36
-%global sayri_version %{?sayri_version:%{sayri_version}}
-%global sayri_version %{!?sayri_version:%{sayri_fallback_version}}
+# The version below is rewritten by packaging/build-packages.sh from
+# packaging/VERSION, the same way it rewrites the Debian control file, so the
+# two packaging paths cannot disagree.
+#
+# It used to be set with a macro that the spec declared, and a macro the spec
+# declares wins over the one the build script passes on the command line, so
+# the spec's own value silently won: the script wrote sayri-0.1.36.tar.gz and
+# rpmbuild was asked to build sayri-0.1.3, and the rpm died in the prep stage
+# looking for a file that was never written. That held for every version above
+# 0.1.3, which is why dist/ has .deb and .pkg.tar.zst from 0.1.28 and 0.1.33
+# and no .rpm at all.
+#
+# Note for whoever edits this: rpm expands macros inside comments, so a
+# percent sign in prose here is not decoration. It gets evaluated.
 
 Name:           sayri
-Version:        %{sayri_version}
+Version:        0.1.36
 Release:        1%{?dist}
 Summary:        Siri-like voice assistant with a reactive orb (GTK4)
 
@@ -53,7 +57,7 @@ It ships with 5 levels of sandboxing, skills/plugins/gateways, a wake word and
 a settings window. Speech and transcription models run 100% locally.
 
 %prep
-# %setup -c creates + cd's into sayri-<version>; the tarball is just the
+# The setup step creates and cds into sayri-<version>; the tarball is just the
 # package tree (usr/ etc/ packaging/), extracted inside that dir.
 %setup -c -q -n sayri-%{version}
 
