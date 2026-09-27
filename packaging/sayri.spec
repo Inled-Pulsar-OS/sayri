@@ -69,12 +69,9 @@ if [ -d etc ]; then
     cp -a etc %{buildroot}/
 fi
 
-# Ensure binaries are executable.
-chmod 0755 %{buildroot}/usr/bin/sayri
-chmod 0755 %{buildroot}/usr/bin/sayri-indicator
-chmod 0755 %{buildroot}/usr/bin/sayri-settings
-chmod 0755 %{buildroot}/usr/bin/sayri-skills
-chmod 0755 %{buildroot}/usr/bin/sayri-plugins
+# Ensure every entry point is executable. Globbed for the same reason as the
+# file list below: a hand-written list here is a list that goes stale.
+chmod 0755 %{buildroot}/usr/bin/sayri*
 find %{buildroot}%{_datadir}/sayri/plugins -type f \( -name "*.py" -o -name "*.sh" \) -exec chmod 0755 {} + 2>/dev/null || :
 
 %files
@@ -84,11 +81,18 @@ find %{buildroot}%{_datadir}/sayri/plugins -type f \( -name "*.py" -o -name "*.s
 %{_datadir}/icons/hicolor/*
 %{_datadir}/pixmaps/sayri.png
 %{_datadir}/pixmaps/sayri.svg
-%{_bindir}/sayri
-%{_bindir}/sayri-indicator
-%{_bindir}/sayri-settings
-%{_bindir}/sayri-skills
-%{_bindir}/sayri-plugins
+# Every entry point, as a glob rather than a list. The list was five of the
+# seven, and rpmbuild refuses to finish when an installed file is not declared
+# below, so sayri-pref and sayri-web took the build down with
+#
+#   error: Installed (but unpackaged) file(s) found:
+#     /usr/bin/sayri-pref
+#     /usr/bin/sayri-web
+#
+# A new entry point would have done the same thing again, so this is the shape
+# that cannot need editing. The Debian and Arch paths install the whole tree
+# and never had the problem.
+%{_bindir}/sayri*
 
 %post
 # Refresh the hicolor icon theme cache so the Sayri icon shows up in menus.
