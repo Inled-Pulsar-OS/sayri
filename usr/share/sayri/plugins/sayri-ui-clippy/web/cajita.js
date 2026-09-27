@@ -52,6 +52,9 @@ let activeTab = "chat";
 // button on a plugin row lands on that plugin's form.
 let focusSection = null;
 let reqSeq = 0;
+// Which render is the current one, and the chain they all take their turn on.
+let renderToken = 0;
+let renderQueue = Promise.resolve();
 let statusTimer = null;
 let pluginInfo = { character: "Clippy", characters: [], sound_effects: true, version: "" };
 
@@ -197,6 +200,222 @@ function replaceBox(box, err) {
   box.appendChild(notice(String((err && err.message) || err)));
 }
 
+// ── permissions ───────────────────────────────────────────────────
+//
+// A question from an agent is the one thing this panel cannot afford to hide.
+// It expires, and an unanswered question is a refusal — so a request opens the
+// panel and puts itself at the top of Chat rather than waiting behind whatever
+// the user happened to be reading. That interruption is the price of turning
+// asking on, and asking is off unless the agent says otherwise.
+//
+// Every button on the card is one round trip to the daemon and no optimism
+// about the outcome: `delivered: false` means the question had already gone, so
+// the card says so rather than pretending it was answered.
+
+let permState = { pending: [], approvals: {}, loaded: false };
+let permTimer = null;
+// One entry per card that has a deadline, pruned by the tick.
+let permCountdowns = [];
+// The block currently on screen, so a repaint replaces the right node.
+let permHost = null;
+
+/** Last one wins per id, so a re-broadcast cannot render the card twice. */
+function dedupeById(list) {
+  const byId = new Map();
+  for (const req of list) byId.set(String((req && req.id) || ""), req);
+  return Array.from(byId.values());
+}
+
+async function refreshPermissions() {
+  try {
+    const r = await call("permission_list");
+    permState = {
+      pending: (r && r.pending) || [],
+      approvals: (r && r.approvals) || {},
+      loaded: true,
+    };
+  } catch (err) {
+    // A daemon that is not answering is the same as no questions open, which
+    // is the safe thing to draw: no card, no countdown, no lie.
+    permState = { pending: [], approvals: {}, loaded: false };
+  }
+  paintPermissions();
+}
+
+/**
+ * Repaint the block in place, or do nothing if no tab is showing it.
+ *
+ * The node is held rather than looked up: this module built it, so it knows
+ * which one it is, and a node that has since been replaced by a tab rebuild is
+ * exactly the case where a search by id would find the wrong thing.
+ */
+function paintPermissions() {
+  const old = permHost;
+  if (!old || !old.parentNode) return;
+  // Built first, then swapped in. The order matters: approvalBlock() records
+  // the new block as permHost, so reading permHost after calling it would hand
+  // replaceChild the node it is meant to be replacing.
+  const next = approvalBlock();
+  old.parentNode.replaceChild(next, old);
+}
+
+/**
+ * The open questions, pinned above the conversation.
+ *
+ * Empty when there is nothing to ask, so the caller can append it either way
+ * and a quiet panel carries no leftover heading.
+ */
+function approvalBlock() {
+  const wrap = el("div", { class: "sayri-approvals" });
+  permHost = wrap;
+  if (!permState.pending.length) return wrap;
+
+  wrap.appendChild(el("h3", {
+    text: permState.pending.length === 1
+      ? "Sayri needs your approval"
+      : "Sayri needs your approval · " + permState.pending.length + " waiting",
+  }));
+  for (const req of permState.pending) wrap.appendChild(approvalCard(req));
+  return wrap;
+}
+
+function approvalCard(req) {
+  const id = String((req && req.id) || "");
+  const card = el("div", { class: "cajita-approval", id: "sayri-approval-" + id });
+
+  card.appendChild(el("div", { class: "cajita-approval-head" },
+    el("span", { class: "cajita-approval-who", text: req.agent_name || req.agent_id || "Sayri" }),
+    countdown(req)));
+
+  // The command is the thing being approved, so it is shown verbatim and in a
+  // monospace face. Never summarised: "runs a system command" is not something
+  // anybody can decide on.
+  card.appendChild(el("pre", { class: "cajita-approval-cmd", text: req.resource || "" }));
+  if (req.reason) {
+    card.appendChild(el("div", { class: "cajita-approval-why", text: req.reason }));
+  }
+
+  const settle = async (allow, remember, label) => {
+    card.innerHTML = "";
+    card.classList.add(allow ? "granted" : "refused");
+    card.appendChild(el("div", { class: "cajita-approval-wait", text: label }));
+    try {
+      const r = await call("permission_answer", {
+        request_id: id, allow: !!allow, remember: !!remember,
+      });
+      if (r && r.delivered === false) {
+        card.classList.remove("granted", "refused");
+        card.classList.add("stale");
+        card.innerHTML = "";
+        card.appendChild(el("div", {
+          class: "cajita-approval-wait",
+          text: "That question had already timed out. Nothing was run.",
+        }));
+        return;
+      }
+      // A remembered answer is a rule that outlives this card, so the saved
+      // list has to be re-read rather than guessed at.
+      if (remember) refreshPermissions();
+    } catch (err) {
+      card.classList.remove("granted", "refused");
+      card.classList.add("stale");
+      card.innerHTML = "";
+      card.appendChild(el("div", {
+        class: "cajita-approval-wait",
+        text: "Could not reach Sayri: " + String((err && err.message) || err),
+      }));
+    }
+  };
+
+  card.appendChild(el("div", { class: "cajita-approval-btns" },
+    button("Allow", () => settle(true, false, "Allowed. Running it now…"), "primary"),
+    button("Always allow", () => settle(true, true, "Allowed, and remembered for next time…")),
+    button("Deny", () => settle(false, false, "Denied. Sayri will be told why."))));
+  return card;
+}
+
+/** The time left on a question, or nothing at all when it does not expire. */
+function countdown(req) {
+  const label = el("span", { class: "cajita-approval-timer" });
+  const total = Number(req && req.expires_in) || 0;
+  if (total <= 0) {
+    label.textContent = "waiting for you";
+    return label;
+  }
+  label.textContent = Math.ceil(total) + "s to answer, then it is refused";
+  // The deadlines live here rather than in the nodes, so the tick is a walk
+  // over a short list instead of a query of the whole document. A question that
+  // times out on the daemon side takes its card away with it, so an entry whose
+  // node is no longer in the document is dropped rather than ticked at.
+  const entry = { node: label, deadline: Date.now() + total * 1000 };
+  permCountdowns.push(entry);
+  if (!permTimer) {
+    permTimer = setInterval(() => {
+      const now = Date.now();
+      permCountdowns = permCountdowns.filter((e) => {
+        if (!e.node.parentNode) return false;
+        const left = (e.deadline - now) / 1000;
+        e.node.textContent = left > 0
+          ? Math.ceil(left) + "s to answer, then it is refused"
+          : "timed out";
+        return true;
+      });
+      if (!permCountdowns.length) {
+        clearInterval(permTimer);
+        permTimer = null;
+      }
+    }, 1000);
+  }
+  return label;
+}
+
+/**
+ * The saved "always allow" rules, and the button to take one back.
+ *
+ * A remembered approval is a standing permission, so it outlives the panel and
+ * the process. Listing it somewhere the user can see is the only reason it is
+ * safe to offer "always" in the first place.
+ */
+function savedApprovalsSection() {
+  const wrap = el("div", { class: "cajita-section", "data-section": "approvals" });
+  wrap.appendChild(el("h3", { text: "Always allow" }));
+
+  const actions = Object.keys(permState.approvals).sort();
+  const rows = [];
+  for (const action of actions) {
+    for (const entry of permState.approvals[action] || []) {
+      const row = el("div", { class: "cajita-item" },
+        el("div", { class: "grow" },
+          el("div", { class: "title", text: entry.resource || "(everything)" }),
+          el("div", {
+            class: "sub",
+            text: action + (entry.agent_id ? " · only " + entry.agent_id : " · every agent"),
+          })),
+        el("div", { class: "actions" },
+          button("Forget", async () => {
+            try {
+              await call("permission_forget", { action: action, agent_id: entry.agent_id || "" });
+            } catch (err) {
+              return;
+            }
+            refreshPermissions();
+          })));
+      rows.push(row);
+    }
+  }
+
+  if (!rows.length) {
+    wrap.appendChild(hint(
+      "Nothing is remembered. Commands marked “ask” run without a question "
+      + "while asking is switched off, and a “always allow” you have never "
+      + "used would be a permission nobody asked for."));
+    return wrap;
+  }
+  for (const row of rows) wrap.appendChild(row);
+  wrap.appendChild(hint("These run without asking from now on, until you forget them."));
+  return wrap;
+}
+
 // ── tab scaffolding ───────────────────────────────────────────────
 
 function buildTabs() {
@@ -217,19 +436,139 @@ function selectTab(id) {
 }
 
 async function render() {
-  if (!open) return;
-  const renderer = TAB_RENDERERS[activeTab];
-  if (!renderer) return;
-  bodyEl.innerHTML = "";
-  bodyEl.appendChild(hint("Loading…"));
-  try {
-    await renderer(bodyEl);
-  } catch (err) {
-    replaceBox(bodyEl, err);
-  }
+  // Renders are chained rather than run at once. A tab that has to ask the
+  // daemon something before it can draw takes a moment, and two of them
+  // appending to the same body is how the panel ends up showing the same
+  // conversation twice. Whatever was asked for while one was in flight
+  // supersedes it rather than queueing up behind it, so a burst of clicks
+  // costs one render and not five.
+  const token = ++renderToken;
+  renderQueue = renderQueue.then(async () => {
+    if (token !== renderToken || !open) return;
+    const renderer = TAB_RENDERERS[activeTab];
+    if (!renderer) return;
+    bodyEl.innerHTML = "";
+    bodyEl.appendChild(hint("Loading…"));
+    try {
+      await renderer(bodyEl);
+    } catch (err) {
+      if (token === renderToken) replaceBox(bodyEl, err);
+    }
+  });
+  return renderQueue;
 }
 
 // ── the live conversation ─────────────────────────────────────────
+
+// Markdown, rendered without a library. The panel is a local file:// page with
+// no network, so a CDN is not an option and shipping a bundler for this would
+// be out of proportion.
+//
+// The order below is the whole safety story: every character is escaped BEFORE
+// any markdown rule runs, and nothing is ever matched as markup. Sayri's
+// replies are model output, which can contain anything — if a rule ran on raw
+// text, a reply containing markup would either break the layout or inject
+// nodes into the panel. Only the handful of tags built below are ever emitted.
+// The panel and the companion's speech bubble are two surfaces showing the same
+// reply, so they share one renderer. Written twice it would be two renderers to
+// keep in step, and the day they disagreed nobody would notice until a reply
+// looked broken in one place and fine in the other.
+export function mdToHtml(src) {
+  const text = String(src == null ? "" : src).replace(/\r\n?/g, "\n");
+  if (!text.trim()) return "";
+
+  // Fenced code is lifted out first so that markdown inside a code block stays
+  // literal, which is the whole point of a code block.
+  const blocks = [];
+  let body = text.replace(/```([a-zA-Z0-9_+-]*)[ \t]*\n?([\s\S]*?)```/g, (_m, lang, code) => {
+    blocks.push(
+      '<pre class="md-code"><code>'
+      + escapeHtml(code.replace(/\n$/, ""))
+      + "</code></pre>"
+    );
+    return "\u0000BLOCK" + (blocks.length - 1) + "\u0000";
+  });
+
+  // Unterminated fence: the model was cut off mid-block, so close it rather
+  // than dropping the rest of the reply.
+  const openFence = body.match(/```([a-zA-Z0-9_+-]*)[ \t]*\n?([\s\S]*)$/);
+  if (openFence) {
+    blocks.push('<pre class="md-code"><code>' + escapeHtml(openFence[2]) + "</code></pre>");
+    body = body.slice(0, openFence.index) + "\u0000BLOCK" + (blocks.length - 1) + "\u0000";
+  }
+
+  body = escapeHtml(body);
+
+  // Inline code is protected the same way, so `*` inside a span is never a
+  // style marker.
+  const spans = [];
+  body = body.replace(/`([^`\n]+)`/g, (_m, code) => {
+    spans.push("<code>" + code + "</code>");
+    return "\u0000SPAN" + (spans.length - 1) + "\u0000";
+  });
+
+  const lines = body.split("\n");
+  const out = [];
+  let list = null; // "ul" | "ol", so a stray blank line does not end a list
+  const closeList = () => { if (list) { out.push("</" + list + ">"); list = null; } };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const quote = line.match(/^&gt;\s?(.*)$/);
+    const fenceLine = line.match(/^\s*(?:---+|\*\*\*+|___+)\s*$/);
+
+    if (h) { closeList(); out.push("<h" + h[1].length + ">" + inline(h[2]) + "</h" + h[1].length + ">"); continue; }
+    if (fenceLine) { closeList(); out.push("<hr>"); continue; }
+    if (quote) { closeList(); out.push("<blockquote>" + inline(quote[1]) + "</blockquote>"); continue; }
+    if (ul || ol) {
+      const want = ul ? "ul" : "ol";
+      if (list !== want) { closeList(); out.push("<" + want + ">"); list = want; }
+      out.push("<li>" + inline((ul || ol)[1]) + "</li>");
+      continue;
+    }
+    closeList();
+    // A blank line is a paragraph break; anything else keeps the flow.
+    if (!line.trim()) { out.push(""); continue; }
+    out.push("<p>" + inline(line) + "</p>");
+  }
+  closeList();
+
+  let html = out.join("\n")
+    // Drop the empty strings the blank lines left behind.
+    .replace(/<p><\/p>/g, "")
+    .replace(/\n{2,}/g, "\n");
+
+  // Restore the literal pieces, innermost first so a code block that held a
+  // code span does not have the span marker stolen out of it.
+  html = html.replace(/\u0000SPAN(\d+)\u0000/g, (_m, n) => spans[+n]);
+  html = html.replace(/\u0000BLOCK(\d+)\u0000/g, (_m, n) => blocks[+n]);
+  return html;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// Inline rules. Only ever run on text that is already escaped.
+function inline(s) {
+  return String(s)
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    // Anything that is not http, https or mailto is left as plain text: a
+    // `javascript:` or `file:` link is not worth the risk of rendering.
+    .replace(/\[([^\]\n]+)\]\((?![a-z]+:|\/|#)([^\s)]+)\)/g, "$1 ($2)")
+    .replace(/\*\*\*([^*\n]+)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,;:!?])/g, "$1<em>$2</em>")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1<em>$2</em>")
+    .replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+}
+
 
 // A command Sayri ran, with how it ended. Kept visually apart from speech:
 // it is machine output, not something the user said or Sayri said out loud.
@@ -240,12 +579,34 @@ function toolRow(turn) {
   const label = state === "running" ? "Running"
     : (state === "failed" ? "Failed" + (t.exit_code ? " (code " + t.exit_code + ")" : "")
                           : "Done");
-  return el("div", { class: "cajita-tool " + state },
+  const row = el("div", { class: "cajita-tool " + state },
     el("div", { class: "tool-head" },
       el("span", { class: "mark", text: mark }),
+      t.step ? el("span", { class: "tool-step", text: "Step " + t.step }) : null,
       el("span", { class: "tool-label", text: label }),
       el("span", { class: "grow" })),
     el("code", { class: "tool-cmd", text: turn.text || "(no command)" }));
+
+  // What the command actually printed. This is the part that explains the
+  // answer: without it you see a list of commands and have to take the result
+  // on trust, which is exactly the "it did something, what?" feeling.
+  if (t.output) {
+    const out = el("pre", { class: "tool-out", text: t.output });
+    row.appendChild(el("div", { class: "tool-out-wrap" },
+      el("button", {
+        class: "tool-out-toggle",
+        text: "Output",
+        onclick: (e) => {
+          e.stopPropagation();
+          const shown = out.style.display !== "none";
+          out.style.display = shown ? "none" : "block";
+          e.target.textContent = shown ? "Output" : "Hide output";
+        },
+      }),
+      out));
+    out.style.display = "none";
+  }
+  return row;
 }
 
 function paintTranscript(log) {  log.innerHTML = "";
@@ -259,9 +620,18 @@ function paintTranscript(log) {  log.innerHTML = "";
       log.appendChild(toolRow(turn));
       continue;
     }
+    // Only Sayri's own replies are markdown. What the user typed is shown as
+    // typed: rendering it would turn a literal "*" in their question into
+    // italics and make the panel disagree with what they actually wrote.
+    const body = el("div", { class: "cajita-body" });
+    if (turn.role === "user") {
+      body.textContent = turn.text;
+    } else {
+      body.innerHTML = mdToHtml(turn.text);
+    }
     log.appendChild(el("div", { class: "cajita-msg " + turn.role },
       el("span", { class: "who", text: turn.role === "user" ? "You" : "Sayri" }),
-      turn.text));
+      body));
   }
   // Keep the newest turn in view as the answer streams in.
   log.scrollTop = log.scrollHeight;
@@ -279,6 +649,10 @@ const TAB_RENDERERS = {
   /** Live conversation, plus a box to type into. */
   async chat(box) {
     box.innerHTML = "";
+    // The questions come first, above the toolbar, because the thing on screen
+    // has to be the decision rather than the way to reach the decision.
+    await refreshPermissions();
+    box.appendChild(approvalBlock());
     box.appendChild(el("div", { class: "cajita-row" },
       button("+ New chat", async () => {
         await call("new_conversation");
@@ -748,8 +1122,80 @@ const TAB_RENDERERS = {
     for (const section of schema.sections || []) {
       box.appendChild(settingsSection(section, "core"));
     }
+
+    // What Sayri is allowed to do without asking, and what it is allowed to do
+    // only if somebody says so. Both halves belong in one place: a switch with
+    // nothing to show for what it has allowed is a switch nobody can audit.
+    await refreshPermissions();
+    box.appendChild(savedApprovalsSection());
+    box.appendChild(processSection());
   },
 };
+
+/**
+ * What Sayri is running, and the two buttons that act on it.
+ *
+ * A companion that is stuck or in the way is the usual reason someone goes
+ * looking for a way to shut Sayri down, so the way out is here rather than
+ * buried in a menu. The state line is filled in after the tab is on screen, so
+ * a slow daemon does not hold up the rest of Settings.
+ */
+function processSection() {
+  const wrap = el("div", { class: "cajita-section", "data-section": "processes" });
+  wrap.appendChild(el("h3", { text: "Sayri processes" }));
+
+  const status = el("div", { class: "cajita-note", text: "Checking what is running\u2026" });
+  wrap.appendChild(status);
+
+  // Two-step confirmation instead of a modal. A native confirm() in a
+  // transparent always-on-top companion window is jarring, and one click on
+  // "Terminate everything" should not be enough to throw away the session.
+  let armed = false;
+  let armTimer = null;
+  const kill = button("Terminate all Sayri processes", () => {
+    if (!armed) {
+      armed = true;
+      kill.textContent = "Click again to confirm";
+      kill.classList.add("armed");
+      // The button forgets on its own, so a stray earlier click cannot
+      // authorise a destructive action half a minute later.
+      if (armTimer) clearTimeout(armTimer);
+      armTimer = setTimeout(() => {
+        armed = false;
+        kill.textContent = "Terminate all Sayri processes";
+        kill.classList.remove("armed");
+      }, 6000);
+      return;
+    }
+    if (armTimer) clearTimeout(armTimer);
+    status.textContent = "Terminating. Sayri is closing now.";
+    postAction("kill_all");
+  }, "danger");
+
+  wrap.appendChild(el("div", { class: "cajita-row" },
+    button("Restart this companion", () => {
+      // The companion restarts itself, so this window goes away mid-action.
+      // Saying so beats a click that looks like it did nothing.
+      status.textContent = "Restarting. The companion will be back in a moment\u2026";
+      postAction("restart_companion");
+    }),
+    kill));
+
+  Promise.resolve()
+    .then(() => call("ui_status", { ui_id: "sayri-ui-clippy" }))
+    .then((s) => {
+      status.textContent = s && s.running
+        ? "The companion is running"
+          + (s.pid ? " (pid " + s.pid + ")" : "") + "."
+        : "The companion is not running.";
+    })
+    .catch(() => {
+      status.textContent = "The daemon did not answer, so the state is unknown. "
+        + "The buttons still work.";
+    });
+
+  return wrap;
+}
 
 // ── settings ───────────────────────────────────────────────────────
 
@@ -1042,6 +1488,9 @@ function agentForm(box, agent) {
     el("label", { text: "Isolation level" }),
     levelSel,
     levelInfo);
+  const loopBox = checkbox(a.investigation_loop, () => {});
+  const learnBox = checkbox(a.reinforcement_learning, () => {});
+  const askBox = checkbox(a.sandbox && a.sandbox.ask_before_run, () => {});
 
   const form = el("div", { class: "cajita-form" },
     el("h4", { text: agent ? "Edit agent" : "New agent" }),
@@ -1053,6 +1502,25 @@ function agentForm(box, agent) {
       "Blank means every installed skill is available. Name skills to limit it to those."),
     field("Allowed tools", tools,
       "Blank means it can use any tool, within its isolation level. Name tools to restrict it."),
+    // These two decide how hard the agent works before answering. Both are off
+    // by default: a capable model asked a straight question should answer it,
+    // not go off searching the web first and then build a reply out of whatever
+    // it found. Turning the loop on opts into that behaviour deliberately.
+    field("Autonomous loop", loopBox,
+      "Searches for how to do something before doing it, and retries when a "
+      + "command fails. Off means it answers directly, and does not search the "
+      + "web unless you ask it to."),
+    field("Learning from past answers", learnBox,
+      "Remembers what it learned about you and consults it next time. Off "
+      + "means each answer stands on its own."),
+    // Asking is opt-in per agent, and only does anything at level 3 or 4. The
+    // note says all three things, because a switch that appears to do nothing
+    // is worse than one that is not there at all.
+    field("Ask before running commands", askBox,
+      "Off by default: commands marked “ask” just run. Turn this on and the "
+      + "agent stops at each one and waits for you in the Chat tab — but only "
+      + "at level 3 and 4, since below that your answer could not change what "
+      + "it is allowed to do. Refusals are not affected either way."),
     el("div", { class: "cajita-row" },
       button("Save", async () => {
         if (!name.value.trim()) { fail(box, "The agent needs a name."); return; }
@@ -1065,6 +1533,9 @@ function agentForm(box, agent) {
             allowed_skills: skills.value,
             allowed_tools: tools.value,
             sandbox_level: levelSel.value,
+            investigation_loop: loopBox.checked,
+            reinforcement_learning: learnBox.checked,
+            ask_before_run: askBox.checked,
           });
         } catch (err) {
           fail(box, err);
@@ -1275,6 +1746,45 @@ export function init() {
 
   document.getElementById("cajita-close").addEventListener("click", () => setOpen(false));
   document.getElementById("cajita-refresh").addEventListener("click", () => render());
+
+  // Follow the conversation. The balloon owns the transcript and pushes a turn
+  // per event; without this the panel only ever redrew when its tab was
+  // rebuilt, so anything happening behind an open Chat tab was invisible until
+  // you closed and reopened it.
+  if (window.sayriBalloon && typeof window.sayriBalloon.onChange === "function") {
+    window.sayriBalloon.onChange(() => refreshChat());
+  }
+
+  // Questions and answers from the daemon. A request opens the panel and lands
+  // on Chat even when the panel was closed, because the alternative is a
+  // question that sits behind a hidden window until it expires, and an expired
+  // question is a refused command.
+  window.addEventListener("sayri-daemon-event", (ev) => {
+    const d = (ev && ev.detail) || {};
+    if (d.event === "permission_request") {
+      permState.pending = dedupeById(permState.pending.concat([d.request || {}]));
+      permState.loaded = true;
+      // Chat, not whatever was open. setOpen() renders the active tab, so the
+      // tab has to be chosen first or the panel would open on a page with no
+      // card on it.
+      if (!open) {
+        activeTab = "chat";
+        setOpen(true);
+      } else if (activeTab !== "chat") {
+        selectTab("chat");
+      } else {
+        paintPermissions();
+      }
+      return;
+    }
+    if (d.event === "permission_resolved") {
+      const id = String(d.request_id || "");
+      permState.pending = permState.pending.filter((r) => String(r.id) !== id);
+      // The answer may have been remembered, which is a rule the panel has to
+      // show, so this re-reads rather than assumes.
+      refreshPermissions();
+    }
+  });
 
   // The panel is the only thing on screen while it is open, so the status
   // poll is the only thing that needs to notice the daemon going away.

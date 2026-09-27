@@ -7,6 +7,7 @@ with interactive animations, sound effects, voice/chat, and XUI skeleton renderi
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import signal
@@ -127,6 +128,9 @@ CALL_ALLOWLIST = frozenset({
     "sessions_list", "session_get", "session_rename", "session_delete",
     # configuration
     "config_get", "config_set", "config_list",
+    # permissions: what an agent is waiting for you to decide, the answer, and
+    # the standing rules a remembered answer created
+    "permission_list", "permission_answer", "permission_forget",
     # settings surface: the panel renders whatever schema the daemon sends, so
     # it needs these to read and write the labelled sections
     "settings_schema", "settings_save", "plugin_settings_set", "asset_download",
@@ -165,10 +169,8 @@ class RetroCompanionWindow:
 
     def __init__(self) -> None:
         self.pid_file = Path(paths.state_dir()) / "sayri-ui-clippy.pid"
+        self._indicator_proc: Optional[subprocess.Popen] = None
         self._write_pid()
-
-        # Ensure tray appindicator is active
-        sysinfo.ensure_indicator()
 
         # Hook termination signals
         signal.signal(signal.SIGTERM, lambda *_: GLib.idle_add(self._quit))
@@ -188,6 +190,8 @@ class RetroCompanionWindow:
                 p_cfg = {}
         self.current_char = p_cfg.get("character") or sayri_config.config.get_string("ui.clippy", "character", "Clippy")
         self.sound_effects = _as_bool(p_cfg.get("sound_effects", True))
+        # -1, not 0: desktop 0 is a real workspace, and starting at it would
+        # make the first tick write a value that is already correct.
         self.client = ipc.SayriClient()
 
         if _GTK_VERSION == 3:
@@ -304,6 +308,10 @@ class RetroCompanionWindow:
         self.win.connect("map", lambda *_: (self._position_bottom_right(), GLib.timeout_add(100, lambda: (self._position_bottom_right(), False))))
         self._position_bottom_right()
 
+        # Last, because it labels the tray entry with the companion that was
+        # chosen, and that is only settled once the config has been read.
+        self._start_indicator()
+
     def _write_pid(self) -> None:
         try:
             self.pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -401,6 +409,7 @@ class RetroCompanionWindow:
         # of drifting off the right edge of the screen.
         w, h = self._window_size()
         right, bottom = 6, 6
+        self._pin_to_all_workspaces()
         try:
             geom = sysinfo.get_primary_geometry_gnome()
             if geom:
@@ -419,6 +428,129 @@ class RetroCompanionWindow:
                                   geom.y + geom.height - h - bottom)
         except Exception:
             pass
+
+    def _pin_to_all_workspaces(self) -> bool:
+        """Ask the window manager to keep this window on every desktop.
+
+        The answer is the EWMH state ``_NET_WM_STATE_STICKY``, appended to the
+        window's own state list together with the above/skip-taskbar hints the
+        window already sets. This is the same call the main Sayri window makes
+        in :mod:`sayri.webkit`, and it is the one that works: the panel was
+        staying on a single desktop because nothing had ever asked for sticky.
+
+        Two things that look right and are not, both tried here first:
+
+        * ``_NET_WM_DESKTOP = 0xFFFFFFFF`` is the EWMH value for "every
+          desktop", but that property is written by the window manager to
+          *inform* clients. A client writing it makes Mutter drop the window
+          from its client list, and the process dies.
+        * Polling ``_NET_CURRENT_DESKTOP`` and moving the window to whichever
+          desktop it read works, at the cost of a wakeup every few hundred
+          milliseconds and a visible lag on every switch. Sticky asks once.
+
+        Appended, not replaced (mode 2), because the existing states are
+        already correct and replacing the list would drop them.
+        """
+        if _GTK_VERSION != 3:
+            # The Wayland path builds the surface with gtk4-layer-shell, which
+            # places it per-monitor and does not read X hints. There is no X
+            # window here to hint.
+            return False
+        gdk_window = self.win.get_window()
+        if gdk_window is None:
+            # Not realized yet. The caller runs again on map, so this is a
+            # normal early return rather than a failure.
+            return False
+        try:
+            xlib = ctypes.CDLL("libX11.so.6")
+        except OSError as exc:
+            print(f"[retro-ui] sticky hint not applied: {exc}", file=sys.stderr)
+            return False
+
+        class _XAtom(ctypes.c_ulong):
+            pass
+
+        class XClientMessageEvent(ctypes.Structure):
+            _fields_ = [
+                ("type", ctypes.c_int),
+                ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int),
+                ("display", ctypes.c_void_p),
+                ("window", ctypes.c_ulong),
+                ("message_type", ctypes.c_ulong),
+                ("format", ctypes.c_int),
+                ("data_l", ctypes.c_long * 5),
+            ]
+
+        class XEvent(ctypes.Union):
+            _fields_ = [
+                ("type", ctypes.c_int),
+                ("xclient", XClientMessageEvent),
+                ("pad", ctypes.c_long * 24),
+            ]
+
+        display = None
+        try:
+            xlib.XOpenDisplay.restype = ctypes.c_void_p
+            xlib.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            xlib.XInternAtom.restype = ctypes.c_ulong
+            xlib.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+            xlib.XChangeProperty.argtypes = [
+                ctypes.c_void_p, ctypes.c_ulong, _XAtom, _XAtom,
+                ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+            ]
+            xlib.XSendEvent.argtypes = [
+                ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long,
+                ctypes.POINTER(XEvent),
+            ]
+            xlib.XSendEvent.restype = ctypes.c_int
+            xlib.XFlush.argtypes = [ctypes.c_void_p]
+            xlib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+
+            display = xlib.XOpenDisplay(None)
+            if not display:
+                print("[retro-ui] sticky hint not applied: no X display",
+                      file=sys.stderr)
+                return False
+            xid = gdk_window.get_xid()
+            root = self.win.get_screen().get_root_window().get_xid()
+            XA_ATOM = 4
+            net_wm_state = xlib.XInternAtom(display, b"_NET_WM_STATE", 0)
+            sticky = xlib.XInternAtom(display, b"_NET_WM_STATE_STICKY", 0)
+            states = (ctypes.c_ulong * 1)(sticky)
+            # Appended to the property as well as sent below. The property is
+            # what a client reads for its own state, and the message is what
+            # Mutter actually acts on: with only the property the state is set
+            # and then never honoured, which looks exactly like no hint at all.
+            xlib.XChangeProperty(display, xid, net_wm_state, XA_ATOM, 32, 2,
+                                 ctypes.cast(states, ctypes.c_void_p), 1)
+
+            # _NET_WM_STATE_ADD, sticky. The mask is the two structure events on
+            # the root: this is a message to the window manager, not to a window.
+            ev = XEvent()
+            ev.type = 33                       # ClientMessage
+            ev.xclient.type = 33
+            ev.xclient.serial = 0
+            ev.xclient.send_event = 1
+            ev.xclient.display = display
+            ev.xclient.window = xid
+            ev.xclient.message_type = net_wm_state
+            ev.xclient.format = 32
+            ev.xclient.data_l[0] = 1           # _NET_WM_STATE_ADD
+            ev.xclient.data_l[1] = sticky
+            ev.xclient.data_l[2] = 0           # second atom: none
+            ev.xclient.data_l[3] = 1           # source: normal application
+            ev.xclient.data_l[4] = 0
+            mask = 0x00100000 | 0x00080000     # Redirect | Notify on the root
+            xlib.XSendEvent(display, root, 0, mask, ctypes.byref(ev))
+            xlib.XFlush(display)
+            return True
+        except Exception as exc:
+            print(f"[retro-ui] sticky hint not applied: {exc}", file=sys.stderr)
+            return False
+        finally:
+            if display:
+                xlib.XCloseDisplay(display)
 
     def _window_size(self) -> tuple[int, int]:
         try:
@@ -474,6 +606,12 @@ class RetroCompanionWindow:
             return
         elif action_id == "cajita_close":
             self._resize_window(440, 380)
+            return
+        elif action_id == "kill_all":
+            self._kill_all_processes()
+            return
+        elif action_id == "restart_companion":
+            self._restart_companion()
             return
         elif action_id.startswith("open_url:"):
             self._open_url(action_id.split(":", 1)[1])
@@ -569,6 +707,48 @@ class RetroCompanionWindow:
         except Exception as exc:
             print(f"[retro-ui] could not open {url}: {exc}", file=sys.stderr)
 
+    def _kill_all_processes(self) -> None:
+        """Terminate every Sayri process, this companion included.
+
+        The request goes to the daemon rather than to the CLI in a child
+        process, because this plugin is one of the things being killed: a
+        subprocess call would be cut off mid-request and could leave the daemon
+        half-told. The daemon survives the sweep (its command line matches none
+        of the patterns) and can still answer whatever comes next.
+        """
+        def _run() -> None:
+            try:
+                self.client.call("killall", {"include_daemon": False}, timeout=8.0)
+            except Exception as exc:
+                # No daemon to ask. Fall back to the CLI, detached, so this
+                # process is not holding the cleanup hostage.
+                print(f"[retro-ui] daemon killall failed ({exc}); using the CLI",
+                      file=sys.stderr)
+                try:
+                    subprocess.Popen(["sayri", "killall"], **sysinfo.spawn_flags())
+                except Exception as exc2:
+                    print(f"[retro-ui] killall fallback failed: {exc2}", file=sys.stderr)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _restart_companion(self) -> None:
+        """Stop and start this UI plugin, without touching the daemon."""
+        # The plugin's own id is the name of the pid file it owns
+        # (…/state/sayri-ui-clippy.pid), which is what the daemon's ui_* commands
+        # key off. Deriving it keeps the two in step with no second source.
+        ui_id = self.pid_file.stem
+
+        def _run() -> None:
+            time.sleep(0.6)
+            for cmd, params in (("ui_stop", {"ui_id": ui_id}),
+                                ("ui_start", {"ui_id": ui_id})):
+                try:
+                    self.client.call(cmd, params, timeout=10.0)
+                except Exception as exc:
+                    print(f"[retro-ui] {cmd} failed: {exc}", file=sys.stderr)
+                    return
+                time.sleep(1.0)
+        threading.Thread(target=_run, daemon=True).start()
+
     def _reply_call(self, req_id: str, ok: bool, data: Any = None, error: str = "") -> None:
         payload = {"req_id": req_id, "ok": bool(ok), "data": data, "error": error}
         self._dispatch_js(
@@ -616,7 +796,73 @@ class RetroCompanionWindow:
         os.system("sayri ui orb &")
         self._quit()
 
+    def _start_indicator(self) -> None:
+        """Run the tray indicator for this companion, in its own process.
+
+        The tray spec is GTK3 and this window is a GTK4 layer-shell webview, so
+        the indicator cannot live in this process. It is started the same way
+        the main app starts its own (app.py runs ``-m sayri.indicator``), which
+        keeps one implementation of the menu instead of two.
+        """
+        env = dict(os.environ)
+        lib_path = os.path.join(paths.lib_dir())
+        env["PYTHONPATH"] = lib_path + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        # The orb's layer-shell preload has to go, or a GTK3 process starts with
+        # GTK4 libraries already mapped and dies on the first window.
+        env.pop("LD_PRELOAD", None)
+        title = self.current_char or "Sayri"
+        self._clear_stale_indicator()
+        try:
+            self._indicator_proc = subprocess.Popen(
+                [sys.executable, "-m", "sayri.indicator",
+                 "--for-ui", self.pid_file.stem, "--title", title],
+                env=env, **sysinfo.spawn_flags())
+        except Exception as exc:
+            print(f"[retro-ui] tray indicator not started: {exc}", file=sys.stderr)
+
+    def _clear_stale_indicator(self) -> None:
+        """Remove an indicator left behind for this companion.
+
+        A companion killed outright (SIGKILL, a crash) never runs its own
+        teardown, so its indicator survives. Starting a second one would leave
+        two identical tray entries, and the orphan would keep a menu that acts
+        on a window that is not there. The pattern includes this companion's id
+        so the main app's own indicator is left alone.
+        """
+        marker = f"sayri.indicator --for-ui {self.pid_file.stem}"
+        try:
+            import subprocess as _sp
+            out = _sp.run(["pgrep", "-f", marker], capture_output=True, text=True,
+                          check=False).stdout
+        except OSError:
+            return
+        for line in out.split():
+            try:
+                pid = int(line.strip())
+            except ValueError:
+                continue
+            if pid and pid != os.getpid():
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+
+    def _stop_indicator(self) -> None:
+        proc = getattr(self, "_indicator_proc", None)
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except Exception:
+                    proc.kill()
+            except Exception:
+                pass
+
     def _quit(self) -> None:
+        # The indicator has to go with the companion, or a tray entry is left
+        # pointing at a window that no longer exists.
+        self._stop_indicator()
         try:
             self.pid_file.unlink(missing_ok=True)
         except Exception:

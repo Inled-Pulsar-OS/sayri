@@ -87,6 +87,20 @@ class SandboxConfig:
     allow_network: bool = True
     allowed_binaries: List[str] = field(default_factory=list)
     blocked_binaries: List[str] = field(default_factory=lambda: ["mkfs", "dd", "shutdown", "reboot"])
+    # Ordered {action, resource, effect} rules, checked newest-last-match-wins,
+    # where effect is allow, ask or deny. blocked_binaries above is still
+    # honoured and is treated as deny rules that come first.
+    #
+    # They are consulted after the isolation level has already allowed execution,
+    # so they are for shaping what a permitted level may do, not for granting it
+    # anything the level forbids.
+    permission_rules: List[dict] = field(default_factory=list)
+    # Whether "ask" rules in this agent stop and wait for the user. Off by
+    # default: the rules still refuse what is refused, and a switch that
+    # interrupts every command is one people turn off. It also only has any
+    # effect at levels 3 and 4, since below those the answer cannot change what
+    # the sandbox allows.
+    ask_before_run: bool = False
 
 
 @dataclass
@@ -103,8 +117,14 @@ class AgentProfile:
     # bounds execution). A non-empty list names the only tools to use.
     allowed_tools: List[str] = field(default_factory=list)
     custom_instructions: str = ""
-    investigation_loop: bool = True
-    reinforcement_learning: bool = True
+    # Both are opt-in. With the loop on, the agent searches the host and the
+    # web for how to do something before doing it, and retries failures. That
+    # is the right behaviour when asked to carry out a task, and the wrong one
+    # for a straight question: a capable model that goes looking first ends up
+    # answering from whatever it scraped. Off by default, so the model is used
+    # for what it already knows and searches only when the user asks.
+    investigation_loop: bool = False
+    reinforcement_learning: bool = False
     created_at: float = field(default_factory=time.time)
     is_builtin: bool = False
 

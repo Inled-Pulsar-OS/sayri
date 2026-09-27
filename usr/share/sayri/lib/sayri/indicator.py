@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from typing import Optional
 
 import gi
 
@@ -32,10 +33,39 @@ from sayri import config, paths, sysinfo
 Gtk.init(sys.argv)
 
 
+def _icon_source() -> Optional[str]:
+    """Find the tray icon in the layouts Sayri is installed and run from.
+
+    indicator.py lives at <root>/share/sayri/lib/sayri/indicator.py, and the
+    icons sit in <root>/share/icons, so the directory to climb out to is the
+    ``share`` one. Only one level too few was enough to make this silently find
+    nothing, which left the tray entry with no icon at all and no error.
+    Several candidates are tried because the same tree is used installed
+    (/usr/share/sayri) and in a checkout (…/PKG/sayri/usr/share/sayri).
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        # Installed: /usr/share/sayri/lib/sayri -> /usr/share/icons
+        os.path.abspath(os.path.join(here, "..", "..", "..", "icons")),
+        # Checked out: …/usr/share/sayri/lib/sayri -> …/usr/share/icons
+        os.path.abspath(os.path.join(here, "..", "..", "icons")),
+        # Already installed system-wide.
+        "/usr/share/icons",
+    ]
+    for base in candidates:
+        path = os.path.join(base, "hicolor", "256x256", "apps", "sayri-tray.png")
+        if os.path.isfile(path):
+            return path
+        path = os.path.join(base, "hicolor", "scalable", "apps", "sayri-tray.png")
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def _ensure_local_icon() -> None:
     user_icons = os.path.expanduser("~/.local/share/icons/hicolor")
-    src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hicolor", "256x256", "apps", "sayri-tray.png"))
-    if os.path.isfile(src):
+    src = _icon_source()
+    if src:
         for sz in ["256x256", "scalable", "48x48", "32x32"]:
             d = os.path.join(user_icons, sz, "apps")
             os.makedirs(d, exist_ok=True)
@@ -45,6 +75,8 @@ def _ensure_local_icon() -> None:
                     shutil.copy2(src, dest)
                 except OSError:
                     pass
+    else:
+        print("[Sayri] tray icon not found; the indicator will have no icon")
 
 
 def is_gui_running() -> bool:
@@ -102,9 +134,40 @@ def send_daemon_command(cmd: str) -> bool:
         return False
 
 
+def _daemon_call(cmd: str, params: Optional[dict] = None, timeout: float = 3.0) -> bool:
+    """Send one command to the daemon, with parameters.
+
+    send_daemon_command covers the argument-less cases; the ui_* and killall
+    commands need a payload, so they go through here.
+    """
+    try:
+        from sayri import ipc
+        client = ipc.SayriClient()
+        try:
+            if not client.connect(timeout=1.5):
+                return False
+            client.request(cmd, params or {}, timeout=timeout)
+            return True
+        finally:
+            client.close()
+    except Exception:
+        return False
+
+
 class SayriIndicator:
-    def __init__(self) -> None:
+    """The tray entry.
+
+    With ``ui_id`` it belongs to a companion (Clippy, Bonzi, …) rather than to
+    the main window, and the menu is about that companion: restart it, open its
+    settings, or take the whole of Sayri down. The companion's window is a GTK4
+    layer-shell webview and cannot host an AppIndicator itself, so the plugin
+    runs this as a child process and the two agree to shut down together.
+    """
+
+    def __init__(self, ui_id: str = "", title: str = "") -> None:
         self.cfg = config.config
+        self.ui_id = str(ui_id or "").strip()
+        self.title = str(title or "").strip() or "Sayri"
         self._sayri_proc: subprocess.Popen | None = None
         self._settings_proc: subprocess.Popen | None = None
         _ensure_local_icon()
@@ -115,12 +178,27 @@ class SayriIndicator:
     def _create_menu(self) -> None:
         self.menu = Gtk.Menu()
 
-        self.toggle_item = Gtk.MenuItem(label="Sayri")
-        self.toggle_item.connect("activate", self._on_toggle_sayri)
-        self.menu.append(self.toggle_item)
+        if self.ui_id:
+            restart = Gtk.MenuItem(label="Restart " + self.title)
+            restart.connect("activate", lambda _i: self._on_restart_ui())
+            self.menu.append(restart)
+        else:
+            self.toggle_item = Gtk.MenuItem(label="Sayri")
+            self.toggle_item.connect("activate", self._on_toggle_sayri)
+            self.menu.append(self.toggle_item)
+
+        settings = Gtk.MenuItem(label="Settings")
+        settings.connect("activate", self._on_open_settings)
+        self.menu.append(settings)
 
         sep = Gtk.SeparatorMenuItem()
         self.menu.append(sep)
+
+        # One click to take everything down, which is what people reach for
+        # when the companion is stuck or in the way.
+        kill = Gtk.MenuItem(label="Terminate all Sayri processes")
+        kill.connect("activate", self._on_kill_all)
+        self.menu.append(kill)
 
         self.quit_item = Gtk.MenuItem(label="Exit")
         self.quit_item.connect("activate", self._on_quit)
@@ -131,23 +209,32 @@ class SayriIndicator:
     def _create_indicator(self) -> None:
         if AppIndicator is not None:
             self.indicator = AppIndicator.Indicator.new(
-                "sayri-indicator",
+                "sayri-indicator" + ("-" + self.ui_id if self.ui_id else ""),
                 "sayri-tray",
                 AppIndicator.IndicatorCategory.APPLICATION_STATUS,
             )
             self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
-            self.indicator.set_title("Sayri")
+            self.indicator.set_title(self.title)
             self.indicator.set_menu(self.menu)
-            self.indicator.set_secondary_activate_target(self.toggle_item)
-            try:
-                self.indicator.connect("activate", lambda _i, _x, _y: self._on_toggle_sayri())
-            except Exception:
-                pass
+            # A companion's menu has no "toggle" entry, so a left click just
+            # opens the menu there instead of aiming at a missing item.
+            if self.ui_id:
+                try:
+                    self.indicator.connect("activate", lambda i, _x, _y: i.props.menu.popup(None, None, None, None, 0, 0))
+                except Exception:
+                    pass
+            else:
+                self.indicator.set_secondary_activate_target(self.toggle_item)
+                try:
+                    self.indicator.connect("activate", lambda _i, _x, _y: self._on_toggle_sayri())
+                except Exception:
+                    pass
         else:
             self.status_icon = Gtk.StatusIcon.new_from_icon_name("sayri-tray")
-            self.status_icon.set_tooltip_text("Sayri Voice Assistant")
+            self.status_icon.set_tooltip_text(self.title)
             self.status_icon.connect("popup-menu", lambda _i, btn, time: self.menu.popup(None, None, None, None, btn, time))
-            self.status_icon.connect("activate", lambda _i: self._on_toggle_sayri(None))
+            if not self.ui_id:
+                self.status_icon.connect("activate", lambda _i: self._on_toggle_sayri(None))
 
     def _on_toggle_sayri(self, _item=None) -> None:
         if is_gui_running():
@@ -180,6 +267,40 @@ class SayriIndicator:
         env.pop("LD_PRELOAD", None)
         self._settings_proc = subprocess.Popen([sys.executable, "-m", "sayri.settings_cajita"], env=env)
 
+    def _on_restart_ui(self) -> None:
+        """Restart the companion this indicator belongs to.
+
+        A stop followed by a start, both through the daemon so the plugin is
+        launched the way it would be from the command line. The wait between
+        them is the plugin's own shutdown window: starting while the old one
+        still holds the pid file leaves two companions fighting over it.
+        """
+        import time
+
+        def _run() -> None:
+            for cmd in ("ui_stop", "ui_start"):
+                if not _daemon_call(cmd, {"ui_id": self.ui_id}, 10.0):
+                    return
+                if cmd == "ui_stop":
+                    time.sleep(1.5)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_kill_all(self) -> None:
+        """Take every Sayri process down, the daemon excepted.
+
+        The daemon is deliberately left running: it is the background service
+        and it is what would start things again. The companion that owns this
+        indicator goes with everything else, so this process has to go too.
+        """
+        def _run() -> None:
+            _daemon_call("killall", {"include_daemon": False}, 8.0)
+            if self._sayri_proc and self._sayri_proc.poll() is None:
+                self._sayri_proc.terminate()
+            if self._settings_proc and self._settings_proc.poll() is None:
+                self._settings_proc.terminate()
+            Gtk.main_quit()
+        threading.Thread(target=_run, daemon=True).start()
+
     def _on_quit(self, _item=None) -> None:
         # "Exit" has to mean "Sayri is gone", not "the tray icon is gone".
         # The daemon owns the companion windows (its core.shutdown() stops
@@ -204,8 +325,28 @@ class SayriIndicator:
         Gtk.main_quit()
 
 
-def main() -> None:
-    app = SayriIndicator()
+def main(argv: Optional[list] = None) -> None:
+    """Run the tray indicator.
+
+    ``--for-ui <id>`` makes this the indicator of a companion rather than of
+    the main window. A companion is a GTK4 layer-shell webview, which cannot
+    host an AppIndicator (the tray spec is GTK3), so the plugin starts this
+    process and stops it again on the way out.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    ui_id = ""
+    title = ""
+    while args:
+        arg = args.pop(0)
+        if arg in ("--for-ui", "-u") and args:
+            ui_id = args.pop(0)
+        elif arg in ("--title", "-t") and args:
+            title = args.pop(0)
+        elif arg in ("-h", "--help"):
+            print(__doc__ or "")
+            return
+
+    app = SayriIndicator(ui_id=ui_id, title=title)
     Gtk.main()
 
 

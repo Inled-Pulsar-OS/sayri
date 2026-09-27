@@ -1,0 +1,50 @@
+{
+  "//": [
+    "Sayri policy file. Installed by the distribution, read after everything",
+    "else, and able only to tighten: a rule here can refuse something the",
+    "agent was allowed to do, but cannot grant anything the agent's own",
+    "rules or its isolation level refused.",
+    "",
+    "A rule is {action, resource, effect}:",
+    "  action    shell | read | write | web | skill | subagent, or * for all",
+    "  resource  a whole value with * (any run) and ? (one character). The",
+    "            match is anchored, so it covers the entire value and not a",
+    "            fragment of it.",
+    "  effect    allow | ask | deny",
+    "",
+    "The last rule that matches decides, so put broad rules first and the",
+    "exceptions after them.",
+    "",
+    "What is already refused without any file: filesystem creation, raw disk",
+    "writes, partition tools, shutdown/reboot/halt/poweroff, and a download",
+    "piped into a shell.",
+    "",
+    "This file ships denies only, and that is a decision rather than an",
+    "omission. A deny is the same command with or without a person in the",
+    "loop, so it means one thing to everybody. An ask does not: with asking",
+    "switched off (the default) a question nobody can answer becomes a",
+    "refusal, which would turn `apt-get install*` into a wall rather than the",
+    "checkpoint its author intended.",
+    "",
+    "For the ask rules, and for what they do once you turn asking on, read",
+    "policies.example.json next to this file. Copy the entries you want into",
+    "an agent's own rules to use them, or turn on asking in Settings."
+  ],
+  "policies": [
+    {
+      "action": "read",
+      "resource": "/etc/shadow",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.ssh/id_*",
+      "effect": "deny"
+    },
+    {
+      "action": "write",
+      "resource": "*/.config/sayri/*",
+      "effect": "deny"
+    }
+  ]
+}

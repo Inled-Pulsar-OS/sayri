@@ -1,0 +1,75 @@
+{
+  "//": [
+    "Not loaded. This is the companion to policies.json: the rules that ask",
+    "rather than refuse, kept out of the shipped file on purpose.",
+    "",
+    "An ask is a checkpoint that stops and puts a question to you. It is not",
+    "a softer deny. Here is what each of those means, because the difference",
+    "is the whole reason these rules are not in the installed policy:",
+    "",
+    "  asking ON, agent at isolation level 3 or 4",
+    "      the command stops, a card appears in the panel with Allow /",
+    "      Allow always / Deny, and nothing runs until you answer.",
+    "",
+    "  asking ON, agent below level 3",
+    "      refused. The answer could not change what the sandbox permits, so",
+    "      there is no point collecting one.",
+    "",
+    "  asking OFF (the default)",
+    "      refused as well, if the rule came from a policy file. This is the",
+    "      part worth knowing before you copy anything from here: a policy",
+    "      ask does not become a yes when nobody is asked. Rules in your own",
+    "      agents do become a yes.",
+    "",
+    "So copy a rule from here into an agent's permission rules, or install",
+    "one of these entries into policies.json, and turn asking on in Settings",
+    "at isolation level 3 or 4. Turning asking on is what turns these from",
+    "walls into questions.",
+    "",
+    "The last rule that matches decides. `git push*` below is deliberately",
+    "before its own dry-run exception, because the exception is the more",
+    "specific of the two and has to be read second."
+  ],
+  "policies": [
+    {
+      "action": "shell",
+      "resource": "git push*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "git push --dry-run*",
+      "effect": "allow"
+    },
+    {
+      "action": "shell",
+      "resource": "npm publish*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "pip install*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "apt-get install*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "apt-get upgrade*",
+      "effect": "ask"
+    },
+    {
+      "action": "shell",
+      "resource": "systemctl *",
+      "effect": "ask"
+    },
+    {
+      "action": "write",
+      "resource": "*.bashrc",
+      "effect": "ask"
+    }
+  ]
+}

@@ -112,10 +112,20 @@ def _agent_to_dict(a: Any) -> dict:
             "level": getattr(sandbox.level, "value", str(getattr(sandbox, "level", ""))),
             "timeout_seconds": getattr(sandbox, "timeout_seconds", None),
             "allow_network": getattr(sandbox, "allow_network", None),
+            # The asking switch, so a front-end can show the stored value
+            # instead of an unchecked box that is really "on". The rules
+            # themselves are deliberately not here: they are the user's own
+            # configuration and this listing is read by every UI on the box.
+            "ask_before_run": bool(getattr(sandbox, "ask_before_run", False)),
         },
         "allowed_skills": list(getattr(a, "allowed_skills", []) or []),
         "allowed_tools": list(getattr(a, "allowed_tools", []) or []),
         "custom_instructions": getattr(a, "custom_instructions", ""),
+        # How hard this agent works before answering. A front-end has to be able
+        # to show and change these, so they have to be in the listing too, not
+        # just in the stored file.
+        "investigation_loop": bool(getattr(a, "investigation_loop", False)),
+        "reinforcement_learning": bool(getattr(a, "reinforcement_learning", False)),
     }
 
 
@@ -169,6 +179,12 @@ class SayriDaemon:
             on_disconnect=self._on_disconnect,
         )
         self.core = SayriCore(ui=BridgeUI(self.server))
+        # A question is raised deep in the agent's thread, so nothing is there
+        # to ask the panel for it. These hooks are how it gets there, and they
+        # are set here because the broadcast is this process's job.
+        broker = self.core.engine.broker
+        broker.on_request = self._on_permission_request
+        broker.on_resolved = self._on_permission_resolved
         self._gateways_started = False
         self._legacy_sock: Optional[socket.socket] = None
         self._legacy_running = False
@@ -197,6 +213,9 @@ class SayriDaemon:
         s.register("stop_listening", lambda p, c: self._cmd_stop(p))
         s.register("toggle_listening", lambda p, c: self._cmd_toggle(p))
         s.register("interrupt", lambda p, c: self._cmd_interrupt(p))
+        s.register("permission_list", lambda p, c: self._cmd_permission_list())
+        s.register("permission_answer", lambda p, c: self._cmd_permission_answer(p))
+        s.register("permission_forget", lambda p, c: self._cmd_permission_forget(p))
         s.register("new_conversation", lambda p, c: self._cmd_new_conversation(p))
         s.register("switch_session", lambda p, c: self._cmd_switch_session(p))
         s.register("config_get", lambda p, c: self._cmd_config_get(p))
@@ -233,6 +252,7 @@ class SayriDaemon:
         s.register("ui_start", lambda p, c: self._cmd_ui_start(p))
         s.register("ui_stop", lambda p, c: self._cmd_ui_stop(p))
         s.register("ui_status", lambda p, c: self._cmd_ui_status(p))
+        s.register("killall", lambda p, c: self._cmd_killall(p))
         s.register("clipboard_copy", lambda p, c: self._cmd_clipboard_copy(p))
         s.register("settings_schema", lambda p, c: self._cmd_settings_schema())
         s.register("settings_save", lambda p, c: self._cmd_settings_save(p))
@@ -272,6 +292,55 @@ class SayriDaemon:
     def _cmd_interrupt(self, params: dict) -> dict:
         self.core.interrupt()
         return {"interrupted": True}
+
+    def _on_permission_request(self, request: dict) -> None:
+        self.server.broadcast("permission_request", request=request)
+
+    def _on_permission_resolved(self, request_id: str) -> None:
+        # Sent whatever the outcome was, including a timeout, because the card
+        # has to leave the screen in every case. A panel that only removes the
+        # card on an answer would keep a dead question on screen for ever.
+        self.server.broadcast("permission_resolved", request_id=request_id)
+
+    # ------------------------------------------------------- permissions
+    #
+    # The agent's thread is parked on a question somewhere in this process. A
+    # front-end has to be able to see what is waiting and answer it, so these
+    # are the two halves of one round trip: "what is open" and "here is the
+    # answer". Saved approvals get a third command because they outlive the
+    # question and the user has to be able to take one back.
+
+    def _cmd_permission_list(self) -> dict:
+        broker = self.core.engine.broker
+        return {
+            "pending": broker.pending(),
+            "approvals": {
+                action: list(entries)
+                for action, entries in broker.saved_approvals().items()
+            },
+        }
+
+    def _cmd_permission_answer(self, params: dict) -> dict:
+        request_id = str(params.get("request_id", "")).strip()
+        if not request_id:
+            raise ValueError("missing 'request_id'")
+        allow = bool(params.get("allow", False))
+        remember = bool(params.get("remember", False))
+        delivered = self.core.engine.broker.answer(
+            request_id, allow, remember=remember)
+        # Not an error: the question can expire between the panel rendering it
+        # and the click landing. Reporting "delivered: false" lets the panel
+        # drop the card quietly instead of showing a failure for something that
+        # is already settled.
+        return {"delivered": delivered, "request_id": request_id, "allow": allow}
+
+    def _cmd_permission_forget(self, params: dict) -> dict:
+        action = params.get("action")
+        if action is not None:
+            action = str(action).strip() or None
+        removed = self.core.engine.broker.forget(
+            action, str(params.get("agent_id", "")))
+        return {"removed": removed}
 
     def _cmd_new_conversation(self, params: dict) -> dict:
         self.core.new_conversation()
@@ -567,6 +636,17 @@ class SayriDaemon:
             except ValueError:
                 raise ValueError(f"unknown isolation level: {sandbox_level}")
 
+        # Read as a bool the way the panel's checkboxes arrive, which is a real
+        # JSON boolean from the web panel and a "0"/"1" string from the CLI.
+        # Left as None when the caller did not mention it, so editing an agent's
+        # name cannot quietly switch its permission asking off.
+        ask_before_run = params.get("ask_before_run")
+        if ask_before_run is not None:
+            if isinstance(ask_before_run, str):
+                ask_before_run = ask_before_run.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                ask_before_run = bool(ask_before_run)
+
         profile = AgentProfile(
             id=agent_id or str(params.get("name", "")).strip().lower().replace(" ", "-"),
             name=str(params.get("name", "")).strip() or "New agent",
@@ -576,8 +656,8 @@ class SayriDaemon:
             allowed_skills=_str_list(params.get("allowed_skills")),
             allowed_plugins=_str_list(params.get("allowed_plugins")),
             allowed_tools=_str_list(params.get("allowed_tools")),
-            investigation_loop=bool(params.get("investigation_loop", True)),
-            reinforcement_learning=bool(params.get("reinforcement_learning", True)),
+            investigation_loop=bool(params.get("investigation_loop", False)),
+            reinforcement_learning=bool(params.get("reinforcement_learning", False)),
         )
         if level is not None:
             profile.sandbox = replace(profile.sandbox, level=level)
@@ -586,10 +666,13 @@ class SayriDaemon:
             profile.created_at = existing.created_at
             profile.is_builtin = existing.is_builtin
             profile.model = existing.model
-            # The rest of the sandbox (timeout, network, binary lists) belongs
-            # to the stored agent; only the level is the panel's to change.
+            # The rest of the sandbox (timeout, network, binary lists, the
+            # permission rules) belongs to the stored agent; the level and the
+            # asking switch are the panel's to change.
             profile.sandbox = replace(existing.sandbox, level=level) if level is not None \
                 else existing.sandbox
+        if ask_before_run is not None:
+            profile.sandbox = replace(profile.sandbox, ask_before_run=ask_before_run)
         # `save_agent` returns the file it wrote, but every other agent command
         # (`agent_delete`, `agent_switch`) takes the slug id, so the reply has to
         # carry the id and not the path.
@@ -665,6 +748,51 @@ class SayriDaemon:
         if not ui_id:
             raise ValueError("missing 'ui_id'")
         return {"ui_id": ui_id, "stopped": ui_id in sysinfo.stop_ui_plugins({ui_id})}
+
+    def _cmd_killall(self, params: dict) -> dict:
+        """Stop every Sayri process except the daemon itself.
+
+        This is what the companion's tray menu and its "Terminate all" button
+        send. The daemon has to be the one to answer, because the process
+        asking is a Sayri process that this very command is about to kill, and
+        a front-end that calls the CLI directly would be killed mid-request.
+
+        The daemon's own command line is "python3 -c ... from sayri.daemon ...",
+        which none of the patterns below match, so the daemon survives and can
+        still answer the next request. Callers that want Sayri gone entirely
+        pass include_daemon.
+        """
+        from . import sysinfo
+
+        include_daemon = bool(params.get("include_daemon", False))
+        # `ui_id` names the one companion to stop, leaving the others alone.
+        # stop_ui_plugins takes the ids to KEEP, so the meaning is inverted here.
+        only = str(params.get("ui_id", "")).strip()
+        skip = {only} if only else None
+
+        stopped = sysinfo.stop_ui_plugins(skip)
+        # kill_process_tree returns nothing, so the report is built from the
+        # requests made rather than from a result that does not exist.
+        requested = ["gateway.py", "sayri.indicator", "python3 -m sayri"]
+        for pattern in requested:
+            try:
+                sysinfo.kill_process_tree(pattern=pattern)
+            except Exception:
+                # One stubborn process must not stop the rest of the cleanup.
+                continue
+        if include_daemon:
+            # The daemon's own command line contains "sayri.daemon", and
+            # kill_process_tree skips the calling process, so this stops the
+            # daemon without it killing itself mid-answer.
+            try:
+                sysinfo.kill_process_tree(pattern="sayri.daemon")
+            except Exception:
+                pass
+        return {
+            "stopped_ui": list(stopped),
+            "signalled": requested + (["sayri.daemon"] if include_daemon else []),
+            "daemon_stopped": include_daemon,
+        }
 
     def _cmd_ui_status(self, params: dict) -> dict:
         ui_id = str(params.get("ui_id", "")).strip()

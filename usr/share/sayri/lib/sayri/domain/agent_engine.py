@@ -11,6 +11,8 @@ from sayri import llm, paths, skills
 from sayri.adapters.sandbox.executor import SandboxExecutor
 from sayri.adapters.storage.sqlite_sessions import SQLiteSessionRepository
 from sayri.domain.agent_creator import AgentCreator
+from sayri.domain.permission_broker import PermissionBroker
+from sayri.domain import permissions as permission_rules
 from sayri.domain.models import (
     AgentProfile,
     Message,
@@ -51,11 +53,77 @@ class AgentEngine:
         self,
         storage: Optional[SQLiteSessionRepository] = None,
         sandbox: Optional[SandboxExecutor] = None,
+        broker: Optional[PermissionBroker] = None,
     ) -> None:
         self.storage = storage or SQLiteSessionRepository()
         self.sandbox = sandbox or SandboxExecutor()
+        # One broker per engine, because the engine is the thing whose thread
+        # parks. Two engines in one process would each be waiting on their own
+        # questions, and a front-end answering one would never reach the other.
+        self.broker = broker or PermissionBroker()
         self._active_queries: Dict[int, bool] = {}
         self._query_counter = 0
+
+    def _ask_if_needed(self, profile: AgentProfile, session_id: str, command: str,
+                       approvable: bool = True) -> bool:
+        """Run the permission check, and ask the user when the answer is "ask".
+
+        The decision itself lives in the executor, which already applies these
+        rules before it runs anything. Doing it here as well is not
+        duplication: the executor's copy runs with nobody able to answer, so an
+        "ask" there can only ever come out as a refusal. This is where the
+        question actually gets asked.
+
+        ``approvable`` says whether anyone is in a position to answer. A turn
+        that arrived over a gateway has nobody: asking there would park the
+        thread for the full timeout behind a prompt on a device that cannot
+        show it, so it is refused outright instead and the model says why.
+
+        Returns True to run the command.
+        """
+        from sayri.domain import permissions
+
+        rules = [
+            permissions.Rule(action=permissions.SHELL, resource=b,
+                             effect=permissions.DENY, source="blocked_binaries")
+            for b in getattr(profile.sandbox, "blocked_binaries", []) or []
+        ]
+        rules += permissions.load_rules(
+            getattr(profile.sandbox, "permission_rules", []) or [], "agent")
+        # Saved "always" answers behave exactly like an allow rule appended at
+        # the end, which is what they mean to the user.
+        rules += self.broker.approval_rules(permissions.SHELL, profile.id)
+
+        policies = getattr(self.sandbox, "_policies", None)
+        decision = permissions.check(
+            permissions.SHELL,
+            command,
+            rules,
+            default=permissions.default_effect_for_level(profile.sandbox.level),
+            policies=policies,
+            level=profile.sandbox.level,
+            ask_enabled=bool(getattr(profile.sandbox, "ask_before_run", False)),
+        )
+        if not decision.needs_ask:
+            # Allow and deny both go through to the executor, which applies the
+            # same rules again before running. A deny is reported from there
+            # with the rule that refused it, which is the message worth showing.
+            return True
+        if not approvable:
+            return False
+
+        return self.broker.ask(
+            permissions.SHELL,
+            command,
+            reason=decision.reason,
+            agent_id=profile.id,
+            agent_name=getattr(profile, "name", "") or profile.id,
+            session_id=session_id,
+            # A policy can only tighten, so the user is told that "always" here
+            # will not actually widen it, rather than offering a button that
+            # does nothing.
+            policy=bool(decision.rule and "policies.json" in (decision.rule.source or "")),
+        )
 
     def build_system_prompt(self, profile: AgentProfile) -> str:
         """Constructs a token-efficient system prompt with self-awareness of sub-agents, skills, plugins and strict sandboxing."""
@@ -113,7 +181,8 @@ class AgentEngine:
             tool_policy = "TOOL RESTRICTIONS: none. You may use any tool you need, as long as it stays within your isolation level.\n"
 
         loop_protocol = ""
-        if getattr(profile, "investigation_loop", True) and not is_level_0:
+        loop_on = bool(getattr(profile, "investigation_loop", False)) and not is_level_0
+        if loop_on:
             loop_protocol = (
                 "AUTONOMOUS 2-PHASE LOOP PROTOCOL (SEARCH HOST & WEB FIRST -> THEN LAUNCH):\n"
                 "CRITICAL RULE: Never guess binary names blindly. Follow this exact 2-step pattern for all desktop and system actions:\n\n"
@@ -147,6 +216,22 @@ class AgentEngine:
                 "If any command fails (non-zero exit code or error output), DO NOT STOP. Inspect the error output, search with `sayri-web` or `grep`, and emit the corrected command.\n\n"
                 "ALWAYS start with Step 1 (search with sayri-pref, sayri-web, grep, or which) before launching.\n\n"
             )
+        elif not is_level_0:
+            # With the loop off, silence would leave the model to guess: a
+            # capable one tends to reach for a search anyway, which is the
+            # behaviour this setting exists to switch off. Say it plainly.
+            loop_protocol = (
+                "DIRECT ANSWERS (the autonomous loop is OFF for this agent):\n"
+                "Answer from what you already know. Do NOT open a web search, and do NOT go "
+                "looking for how to do something, before answering a question.\n"
+                "Use a command only when the user asked for an action to be carried out, or "
+                "when you would otherwise be guessing at something you are not sure of.\n"
+                "If a command does fail, report the failure and what you would try instead, "
+                "rather than silently working around it.\n"
+                "If the user asks you to look something up, or to find out how to do "
+                "something, then search — the restriction is on searching unprompted, not on "
+                "searching at all.\n\n"
+            )
 
         base = (
             f"You are Sayri, the intelligent assistant, agentic orchestrator and operating-system copilot in Pulsar OS.\n"
@@ -160,7 +245,7 @@ class AgentEngine:
             "2. Sub-Agent Creation and Management: You can create sub-agents configured with different models and sandbox levels.\n"
             "3. Skills and Plugins: You can search for and install extensions from the Pulsar Store (https://store-os.inled.es).\n"
             "4. Memory & Conversation History: You maintain context with recent messages. If you need details from earlier in the conversation, you can emit ```search_history <keyword>``` to query past messages.\n"
-            + ("5. Learned Preferences: You can query your learned experience and past user preferences anytime in bash with ```sayri-pref query \"<keyword>\"```.\n" if getattr(profile, "reinforcement_learning", True) else "")
+            + ("5. Learned Preferences: You can query your learned experience and past user preferences anytime in bash with ```sayri-pref query \"<keyword>\"```.\n" if getattr(profile, "reinforcement_learning", False) else "")
             + f"{skills_summary}\n\n"
             f"{loop_protocol}"
             "CRITICAL EXECUTION AND TRUTHFULNESS RULES:\n"
@@ -182,8 +267,13 @@ class AgentEngine:
         on_tool_start: Callable[[str], None],
         on_tool_finish: Callable[[str, str, int], None],
         on_error: Callable[[Exception], None],
+        approvable: bool = True,
     ) -> int:
-        """Initiates a ReAct agent query in a background thread."""
+        """Initiates a ReAct agent query in a background thread.
+
+        ``approvable`` is false for a turn nobody is watching, which is the
+        gateway path. See :meth:`_ask_if_needed`.
+        """
         self._query_counter += 1
         query_id = self._query_counter
         self._active_queries[query_id] = True
@@ -217,7 +307,10 @@ class AgentEngine:
                 return query_id
 
             ok, msg, created_profile = AgentCreator.create_agent_from_prompt(
-                user_text, max_allowed_level=profile.sandbox.level
+                user_text,
+                max_allowed_level=profile.sandbox.level,
+                inherits_investigation_loop=bool(getattr(profile, "investigation_loop", False)),
+                inherits_learning=bool(getattr(profile, "reinforcement_learning", False)),
             )
             reply_msg = Message(role="assistant", content=msg)
             self.storage.add_message(session.id, reply_msg)
@@ -293,6 +386,7 @@ class AgentEngine:
                 on_tool_start,
                 on_tool_finish,
                 on_error,
+                approvable,
             ),
             daemon=True,
         ).start()
@@ -355,8 +449,9 @@ class AgentEngine:
         on_tool_start: Callable[[str], None],
         on_tool_finish: Callable[[str, str, int], None],
         on_error: Callable[[Exception], None],
+        approvable: bool = True,
     ) -> None:
-        max_depth = 10 if getattr(profile, "investigation_loop", True) else 6
+        max_depth = 10 if getattr(profile, "investigation_loop", False) else 6
         if not self._active_queries.get(query_id, False) or depth > max_depth:
             return
 
@@ -448,6 +543,30 @@ class AgentEngine:
                             "This agent operates in pure conversational mode and cannot execute bash commands, run scripts, or touch host files."
                         )
                         duration = 1.0
+                    elif not self._ask_if_needed(profile, session_id, cmd,
+                                                 approvable=approvable):
+                        # The user said no, the question timed out, or nobody was
+                        # there to answer it. The refusal goes back to the model
+                        # as the tool result, so it can say what it would have
+                        # run and why, rather than the turn ending with a
+                        # command that silently did not run.
+                        retcode = 126
+                        if approvable:
+                            output = (
+                                "🚫 [NOT APPROVED]: The user did not approve running this command, "
+                                "so it was not executed. Do not retry it as written. If the task "
+                                "still needs doing, say what you would have run and why, and let "
+                                "the user decide."
+                            )
+                        else:
+                            output = (
+                                "🚫 [NO APPROVER AVAILABLE]: This command needs the user's "
+                                "approval, and this conversation is not one where they can give "
+                                "it, so it was not executed. Say that it needs approval in the "
+                                "Sayri app, and let them approve it there. Do not retry it and "
+                                "do not try to reach the same result another way."
+                            )
+                        duration = 1.0
                     else:
                         retcode, output, duration = self.sandbox.execute(
                             cmd, profile.sandbox, agent_id=profile.id
@@ -478,7 +597,7 @@ class AgentEngine:
                     next_messages.append({"role": "assistant", "content": full_text})
 
                     if retcode != 0:
-                        if getattr(profile, "investigation_loop", True):
+                        if getattr(profile, "investigation_loop", False):
                             observation = (
                                 f"⚠️ [EXECUTION FAILED (Exit Code {retcode})]:\n{sanitized_output}\n\n"
                                 "AUTONOMOUS SELF-HEALING LOOP ACTIVE: The previous command failed or did not finish as expected. "
@@ -494,7 +613,7 @@ class AgentEngine:
                             )
                     else:
                         is_investigation_cmd = any(cmd.strip().startswith(prefix) for prefix in ("sayri-pref", "sayri-web", "grep", "which", "find", "cat", "echo", "pwd", "ls", "search_history", "head", "tail", "pacman -Q", "flatpak list"))
-                        if is_investigation_cmd and getattr(profile, "investigation_loop", True):
+                        if is_investigation_cmd and getattr(profile, "investigation_loop", False):
                             observation = (
                                 f"[Investigation Output (Exit Code 0)]:\n{sanitized_output}\n\n"
                                 "Phase 1 search is complete. Now proceed to Phase 2: emit the bash block with the discovered application binary in background (e.g. ```bash\n<binary> &\n```) to execute the action for the user."
@@ -505,7 +624,7 @@ class AgentEngine:
                                 "The command/application was executed successfully. Respond to the user concisely and pleasantly, reporting the result."
                             )
                     # Auto-record learned preferences for substantive commands
-                    if getattr(profile, "reinforcement_learning", True) and not cmd.startswith(("sayri-pref", "grep", "which", "find", "cat", "echo", "pwd", "ls", "search_history")):
+                    if getattr(profile, "reinforcement_learning", False) and not cmd.startswith(("sayri-pref", "grep", "which", "find", "cat", "echo", "pwd", "ls", "search_history")):
                         try:
                             user_intent = ""
                             for m_item in messages:

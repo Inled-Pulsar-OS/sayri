@@ -98,6 +98,62 @@
       max-height: 140px;
       overflow-y: auto;
     }
+    /* Rendered markdown. The plain rule above keeps the newlines the model
+       actually wrote; these undo that, because once a reply is turned into
+       paragraphs the blank lines it typed would double up with the spacing
+       the tags bring. */
+    .balloon-text.md { white-space: normal; }
+    .balloon-text.md > *:first-child { margin-top: 0; }
+    .balloon-text.md > *:last-child { margin-bottom: 0; }
+    .balloon-text.md p { margin: 0 0 5px; }
+    .balloon-text.md h1, .balloon-text.md h2, .balloon-text.md h3,
+    .balloon-text.md h4, .balloon-text.md h5, .balloon-text.md h6 {
+      margin: 6px 0 3px; font-size: 13px; line-height: 1.25;
+    }
+    .balloon-text.md h1 { font-size: 15px; }
+    .balloon-text.md h2 { font-size: 14px; }
+    .balloon-text.md ul, .balloon-text.md ol { margin: 0 0 5px; padding-left: 17px; }
+    .balloon-text.md li { margin: 1px 0; }
+    .balloon-text.md a { color: #1c5fb4; }
+    .balloon-text.md blockquote {
+      margin: 4px 0; padding: 2px 0 2px 7px;
+      border-left: 2px solid #b8c4cf; color: #55606b;
+    }
+    .balloon-text.md hr { border: 0; border-top: 1px solid #c8d2da; margin: 6px 0; }
+    .balloon-text.md code {
+      font-family: monospace; font-size: 11.5px;
+      background: #eceff1; border-radius: 2px; padding: 0 3px;
+    }
+    .balloon-text.md pre.md-code {
+      margin: 4px 0; padding: 5px 6px; overflow-x: auto;
+      background: #eceff1; border-radius: 3px;
+    }
+    .balloon-text.md pre.md-code code { background: none; padding: 0; }
+    /* The commands Sayri ran, above what it said about them. In the panel this
+       is a whole transcript; in the bubble it has to fit in 140px, so the
+       command is one line and the output is behind a toggle. */
+    .balloon-tools {
+      display: flex; flex-direction: column; gap: 3px;
+      margin: 0 0 6px; padding-bottom: 6px;
+      border-bottom: 1px solid #dfe4e8;
+    }
+    .balloon-tool { display: flex; align-items: flex-start; gap: 5px; font-size: 11.5px; }
+    .balloon-tool .mark { flex: none; }
+    .balloon-tool .bt-cmd {
+      font-family: monospace; font-size: 11px; color: #2b3138;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto;
+    }
+    .balloon-tool.failed .mark { color: #c01c28; }
+    .balloon-tool.running .mark { color: #b8860b; }
+    .balloon-tool-out {
+      margin: 2px 0 0 16px; padding: 4px 5px; max-height: 90px; overflow: auto;
+      background: #f4f6f7; border-radius: 3px;
+      font-family: monospace; font-size: 10.5px; white-space: pre-wrap; color: #3c444c;
+    }
+    .balloon-tool-toggle {
+      flex: none; font-size: 10.5px; padding: 0 4px; cursor: pointer;
+      background: #e7eaed; border: 1px solid #c3ccd4; border-radius: 2px; color: #333;
+    }
     /* XUI declarative skeleton nodes */
     .xui-container {
       display: flex;
@@ -369,6 +425,19 @@
       border-color: #cc0000;
       color: #990000;
     }
+    /* The destructive button after the first click: it says what the second
+       click does, so the two-step confirm is readable rather than a surprise. */
+    .cajita-btn.armed {
+      background: #cc0000;
+      border-color: #7a0000;
+      color: #ffffff;
+      font-weight: bold;
+    }
+    .cajita-note {
+      margin: 3px 0 6px;
+      font-size: 10.5px;
+      color: #55555f;
+    }
     /* A section with typed-but-unsaved edits marks its Save button, so an API
        key that was never stored does not look like it worked. */
     .cajita-btn.dirty {
@@ -463,6 +532,57 @@
       background: #f2fbe8;
       border-color: #c3e0a0;
     }
+    /* Markdown lives in its own box so it can use normal flow: the message keeps
+       pre-wrap for what the user literally typed, while rendered markdown gets
+       real block spacing instead of a blank line per tag. */
+    .cajita-body { white-space: normal; }
+    .cajita-msg.user .cajita-body { white-space: pre-wrap; }
+    .cajita-body > *:first-child { margin-top: 0; }
+    .cajita-body > *:last-child { margin-bottom: 0; }
+    .cajita-body p { margin: 0 0 5px; }
+    .cajita-body h1, .cajita-body h2, .cajita-body h3,
+    .cajita-body h4, .cajita-body h5, .cajita-body h6 {
+      margin: 7px 0 4px;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+    .cajita-body ul, .cajita-body ol { margin: 0 0 5px; padding-left: 17px; }
+    .cajita-body li { margin: 1px 0; }
+    .cajita-body a { color: #1c5fb4; }
+    .cajita-body blockquote {
+      margin: 0 0 5px;
+      padding: 1px 0 1px 7px;
+      border-left: 2px solid #c3c3cd;
+      color: #55555f;
+    }
+    .cajita-body hr {
+      margin: 6px 0;
+      border: 0;
+      border-top: 1px solid #d5d5dd;
+    }
+    .cajita-body code {
+      padding: 1px 3px;
+      background: #e6e6ec;
+      border-radius: 2px;
+      font-family: monospace;
+      font-size: 10.5px;
+    }
+    .cajita-body pre.md-code {
+      margin: 0 0 5px;
+      padding: 5px 6px;
+      background: #ffffff;
+      border: 1px solid #d5d5dd;
+      border-radius: 3px;
+      overflow: auto;
+      max-height: 260px;
+    }
+    .cajita-body pre.md-code code {
+      padding: 0;
+      background: none;
+      font-size: 10.5px;
+      line-height: 1.45;
+      white-space: pre;
+    }
     /* A command Sayri ran: machine output, so it reads as its own kind of
        thing rather than as something that was said. */
     .cajita-tool {
@@ -490,6 +610,37 @@
       font-size: 10px;
       text-transform: uppercase;
       color: #666666;
+    }
+    .cajita-tool .tool-step {
+      font-size: 9.5px;
+      color: #8a8a95;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .cajita-tool .tool-out-toggle {
+      margin-top: 4px;
+      padding: 2px 7px;
+      font-size: 10px;
+      background: #ffffff;
+      border: 1px solid #d2d2da;
+      border-radius: 3px;
+      color: #55555f;
+      cursor: pointer;
+    }
+    .cajita-tool .tool-out-toggle:hover { background: #f0f0f4; }
+    .cajita-tool .tool-out {
+      margin: 4px 0 0;
+      padding: 4px 6px;
+      max-height: 190px;
+      overflow: auto;
+      background: #ffffff;
+      border: 1px solid #e2e2e8;
+      font-family: monospace;
+      font-size: 10.5px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #24242c;
     }
     .cajita-tool .tool-cmd {
       display: block;
@@ -555,6 +706,89 @@
       font-size: 11px;
       margin-bottom: 6px;
       outline: none;
+    }
+    /* The approval cards. Deliberately the loudest thing in the panel: they
+       are the only elements that disappear on their own, so they have to read
+       as urgent rather than as another list row. */
+    .sayri-approvals {
+      margin: 0 0 8px 0;
+      padding: 6px;
+      background: #fff4d6;
+      border: 2px solid #b8860b;
+    }
+    .sayri-approvals h3 {
+      margin: 0 0 6px 0;
+      font-size: 11px;
+      color: #7a5c00;
+    }
+    .cajita-approval {
+      background: #ffffff;
+      border: 1px solid #b8860b;
+      padding: 6px;
+      margin-bottom: 6px;
+    }
+    .cajita-approval:last-child {
+      margin-bottom: 0;
+    }
+    .cajita-approval.granted {
+      border-color: #2e7d32;
+      background: #f2f9f2;
+    }
+    .cajita-approval.refused {
+      border-color: #8a3b3b;
+      background: #fbf2f2;
+    }
+    .cajita-approval.stale {
+      border-color: #999999;
+      background: #f4f4f4;
+    }
+    .cajita-approval-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .cajita-approval-who {
+      font-size: 10px;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: #7a5c00;
+    }
+    .cajita-approval-timer {
+      font-size: 10px;
+      color: #8a6d1f;
+      white-space: nowrap;
+    }
+    /* The command being approved, verbatim and unbroken. A wrapped or
+       summarised command is not a command anybody can say yes or no to. */
+    .cajita-approval-cmd {
+      margin: 0 0 4px 0;
+      padding: 4px 6px;
+      background: #1e1e1e;
+      color: #e8e8e8;
+      font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .cajita-approval-why {
+      font-size: 10px;
+      color: #555555;
+      margin-bottom: 6px;
+    }
+    .cajita-approval-btns {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    .cajita-approval-wait {
+      font-size: 11px;
+      font-weight: bold;
+      color: #444444;
     }
     ::-webkit-scrollbar {
       width: 12px;
@@ -689,12 +923,97 @@
     let stickyTimer = null;
     let streamBuf = "";
     let transcript = [];
+    // Counts the commands in the current turn, so the panel can label them
+    // "1 of 4" instead of leaving four identical-looking rows.
+    let toolStep = 0;
+
+    // The commands Sayri ran during the turn in progress, kept above the text
+    // so that what it did and what it said arrive as one message. The old
+    // bubble flashed "Running: …" as a line of text that was gone by the time
+    // the reply landed, which left an answer you could not account for.
+    let balloonToolRows = [];
+    // The text currently on the bubble, so a command finishing can repaint the
+    // row it settled without re-showing the balloon and losing what was said.
+    let lastBalloonText = "";
+
+    function balloonToolRow(row) {
+      const wrap = document.createElement("div");
+      wrap.className = "balloon-tool " + (row.state || "running");
+
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.textContent = row.state === "running" ? "⏳"
+        : (row.state === "failed" ? "✗" : "✓");
+      wrap.appendChild(mark);
+
+      // The command, verbatim and in a monospace face: never summarised.
+      const cmd = document.createElement("code");
+      cmd.className = "bt-cmd";
+      cmd.textContent = row.command;
+      cmd.title = row.command;
+      wrap.appendChild(cmd);
+
+      if (row.output) {
+        const out = document.createElement("pre");
+        out.className = "balloon-tool-out";
+        out.textContent = row.output;
+        out.style.display = "none";
+
+        const toggle = document.createElement("button");
+        toggle.className = "balloon-tool-toggle";
+        toggle.textContent = "Output";
+        toggle.title = "Show what this command printed";
+        toggle.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const shown = out.style.display !== "none";
+          out.style.display = shown ? "none" : "block";
+          toggle.textContent = shown ? "Output" : "Hide";
+        });
+        wrap.appendChild(toggle);
+
+        const holder = document.createElement("div");
+        holder.appendChild(out);
+        // The output is a sibling of the row, not a child: the row is a flex
+        // line and the output needs the full width under it.
+        const outer = document.createElement("div");
+        outer.appendChild(wrap);
+        outer.appendChild(holder);
+        return outer;
+      }
+      return wrap;
+    }
+
+    function paintBalloonBody(text, kind) {
+      // Remove the previous turn's rows so the list is rebuilt, not appended to.
+      for (const old of Array.from(balloon.querySelectorAll(".balloon-tools"))) {
+        old.remove();
+      }
+      if (balloonToolRows.length) {
+        const box = document.createElement("div");
+        box.className = "balloon-tools";
+        for (const row of balloonToolRows) box.appendChild(balloonToolRow(row));
+        balloon.insertBefore(box, balloonText);
+      }
+      // Only what Sayri said is markdown. A question, an error or a status line
+      // is not written in markdown, and running those through the renderer buys
+      // nothing while making the asterisks in a path come out looking bold.
+      const asMarkdown = (kind === "reply");
+      balloonText.classList.toggle("md", asMarkdown);
+      if (asMarkdown) balloonText.innerHTML = cajita.mdToHtml(text);
+      else balloonText.textContent = text;
+    }
 
     window._doShowBalloon = function(text, header = "💡 Sayri Assistant", kind = "info") {
       lastKind = kind || "info";
       lastAt = Date.now();
       headerTitle.textContent = header;
-      balloonText.textContent = text;
+      // A new question starts a new account of how the answer was arrived at,
+      // so the commands from the last one go. Showing them again would put
+      // last turn's commands above this turn's answer and read as if they had
+      // produced it.
+      if (lastKind === "user") balloonToolRows = [];
+      lastBalloonText = text == null ? "" : String(text);
+      paintBalloonBody(lastBalloonText, lastKind);
       balloon.style.display = "flex";
       if (hideBalloonTimeout) clearTimeout(hideBalloonTimeout);
       if (stickyTimer) { clearTimeout(stickyTimer); stickyTimer = null; }
@@ -1056,6 +1375,7 @@
 
         case "user":
           streamBuf = "";
+          toolStep = 0;
           // The moment the request is out, the wait starts: the companion
           // thinks until the voice kicks in (the `speaking` event).
           setAnimState("thinking");
@@ -1103,25 +1423,55 @@
           streamBuf = "";
           // Running a command is work in progress, so the companion says so.
           setAnimState("thinking");
+          // Commands run in a sequence, so the step number makes the flow
+          // readable: "2 of 5" says far more than five identical-looking rows.
           pushTranscript("tool", String(event.command || "").trim(),
-            { state: "running" });
-          window._doShowBalloon("Running: " + (event.command || ""), "⚙️ Sayri", "status");
+            { state: "running", step: ++toolStep });
+          // Recorded as a row rather than a line of text, so the reply that
+          // comes next lands under the command that produced it instead of
+          // wiping it off the screen.
+          balloonToolRows.push({
+            command: String(event.command || "").trim(),
+            state: "running",
+          });
+          window._doShowBalloon("", "⚙️ Sayri", "status");
           break;
 
         case "tool_finish": {
           // Close the command that is still open rather than starting a new
           // turn, so one command reads as one entry with one result.
           const code = event.exit_code;
+          const output = typeof event.output === "string" ? event.output.slice(0, 4000) : "";
           for (let i = transcript.length - 1; i >= 0; i--) {
             const t = transcript[i];
             if (t.role === "tool" && t.tool && t.tool.state === "running") {
               t.tool.state = (!code) ? "ok" : "failed";
               t.tool.exit_code = code;
+              // The daemon already sends what the command printed. Keeping it
+              // next to the command is what turns a bare list of commands into
+              // a readable account of how the answer was arrived at.
+              t.tool.output = output;
               break;
             }
           }
+          // The bubble keeps its own copy, matched the same way: the last row
+          // still marked running is the one that just finished.
+          for (let i = balloonToolRows.length - 1; i >= 0; i--) {
+            if (balloonToolRows[i].state === "running") {
+              balloonToolRows[i].state = (!code) ? "ok" : "failed";
+              balloonToolRows[i].output = output;
+              break;
+            }
+          }
+          notifyTranscript();
           if (code && !hasFreshPayload()) {
             window._doShowBalloon("Command finished (code " + code + ")", "⚙️ Sayri", "status");
+          } else {
+            // Repainted in place. Going back through _doShowBalloon would
+            // restart the hide timer, so a burst of commands would hold the
+            // bubble up for as long as they ran and then drop it the moment
+            // they stopped.
+            paintBalloonBody(lastBalloonText, lastKind);
           }
           break;
         }
@@ -1135,6 +1485,8 @@
         case "conversation_started":
           streamBuf = "";
           transcript = [];
+          toolStep = 0;
+          balloonToolRows = [];
           window._doShowBalloon("New conversation started.", "💡 Sayri", "status");
           break;
 
@@ -1215,10 +1567,15 @@
     // ── Cajita panel ────────────────────────────────────────────────────
     // The full assistant card lives in its own module; this is only the small
     // amount of shared state it needs from the balloon.
+    const transcriptListeners = [];
     window.sayriBalloon = {
       get transcript() { return transcript; },
-      setTranscript(turns) { transcript = turns || []; },
-      resetTranscript() { transcript = []; },
+      setTranscript(turns) { transcript = turns || []; notifyTranscript(); },
+      resetTranscript() { transcript = []; notifyTranscript(); },
+      // The panel has to repaint as the conversation happens. Without this it
+      // only redraws when its tab is rebuilt, so a reply streaming in behind an
+      // open Chat tab looked frozen, and the tool calls never appeared at all.
+      onChange(fn) { if (typeof fn === "function") transcriptListeners.push(fn); },
       show(text, header, kind) { window._doShowBalloon(text, header, kind); },
       hide() { balloon.style.display = "none"; },
       // The panel uses this when it hands the window back to the companion, so
@@ -1238,16 +1595,33 @@
     cajita.init();
 
     // ── the live conversation, mirrored into the Cajita Chat tab ────────
+    // Streaming arrives one token at a time, so the panel is told at most a few
+    // times a second rather than per token: repainting the whole transcript for
+    // every word is what would otherwise make a long answer crawl.
+    let notifyQueued = false;
+    function notifyTranscript() {
+      if (notifyQueued) return;
+      notifyQueued = true;
+      setTimeout(() => {
+        notifyQueued = false;
+        for (const fn of transcriptListeners.slice()) {
+          try { fn(); } catch (e) {}
+        }
+      }, 200);
+    }
+
     function pushTranscript(role, text, meta) {
       if (role === "tool") {
         // A command is a turn of its own so the chat can show what Sayri ran
         // and how it ended, instead of only a balloon that scrolls away.
         transcript.push({ role: "tool", text: text || "", tool: meta || {} });
+        notifyTranscript();
         return;
       }
       if (!text) return;
       if (role === "user") {
         transcript.push({ role: "user", text: text });
+        notifyTranscript();
         return;
       }
       // Streaming deltas arrive as fragments: keep rewriting the last
@@ -1258,11 +1632,13 @@
       } else {
         transcript.push({ role: "assistant", text: text, streaming: true });
       }
+      notifyTranscript();
     }
 
     function closeTranscriptTurn() {
       const last = transcript[transcript.length - 1];
       if (last && last.role === "assistant") last.streaming = false;
+      notifyTranscript();
     }
 
     if (window.pendingAgent) {

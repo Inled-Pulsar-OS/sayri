@@ -10,6 +10,7 @@ import time
 from typing import Tuple
 
 from sayri import sysinfo
+from sayri.domain import permissions
 from sayri.domain.models import SandboxConfig, SandboxLevel
 from sayri.domain.secrets_manager import secrets_manager
 
@@ -25,6 +26,19 @@ class SandboxExecutor:
         self.sandboxes_root = sandboxes_root or os.path.expanduser("~/.local/share/sayri/sandboxes")
         os.makedirs(self.sandboxes_root, exist_ok=True)
         self.bwrap_available = bool(shutil.which("bwrap"))
+        # Read once per executor: the policy files are installed by the distro
+        # and do not change while Sayri runs, and re-reading them for every
+        # command would put a file read on the path of every tool call.
+        self._policies = permissions.load_policies()
+
+    def policies(self) -> list:
+        """The tightening-only policy rules this executor applies.
+
+        Exposed because the agent has to run the same check itself before it
+        runs anything, and having two copies of the list would mean a policy
+        file reloaded in one place and not the other.
+        """
+        return self._policies
 
     def execute(
         self,
@@ -70,14 +84,45 @@ class SandboxExecutor:
                         0.0,
                     )
 
-        # 4. Explicit blocked binaries check
-        for blocked in config.blocked_binaries:
-            if blocked in raw_cmd.split():
-                return (
-                    126,
-                    f"Security error: The command '{blocked}' is explicitly blocked in the agent's policy.",
-                    0.0,
-                )
+        # 4. Permission rules: the agent's own ordered rules, then the
+        #    tightening-only policy layer. This replaces a word-by-word
+        #    comparison against four hardcoded names, which missed "rm -rf",
+        #    "chmod", "mv" and anything piped into a shell, and could not ask
+        #    the user about anything.
+        #
+        #    The old list is still honoured, as deny rules appended before the
+        #    agent's own. Putting them first means an existing profile that
+        #    blocks something keeps blocking it, and a later, narrower rule in
+        #    the same profile can still make an exception.
+        legacy = [
+            {"action": permissions.SHELL, "resource": b, "effect": permissions.DENY}
+            for b in config.blocked_binaries
+        ]
+        rules = permissions.load_rules(legacy, "blocked_binaries")
+        rules += permissions.load_rules(config.permission_rules, "agent")
+
+        decision = permissions.check(
+            permissions.SHELL,
+            raw_cmd,
+            rules,
+            default=permissions.default_effect_for_level(config.level),
+            policies=self._policies,
+            level=config.level,
+            ask_enabled=bool(getattr(config, "ask_before_run", False)),
+        )
+        if decision.denied:
+            return (126, "Security error: " + decision.message(), 0.0)
+        if decision.needs_ask:
+            # A rule asked for the user's approval and nobody is here to give
+            # it. Treating that as a yes would make "ask" the most permissive
+            # effect there is, so it refuses and says why.
+            return (
+                126,
+                "Permission error: " + decision.message()
+                + "\nNo approver is available on this path, so it was not run. "
+                  "Change the rule to allow, or lower the isolation level.",
+                0.0,
+            )
 
         timeout = max(1, config.timeout_seconds)
 

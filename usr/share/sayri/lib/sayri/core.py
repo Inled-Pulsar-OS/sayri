@@ -215,6 +215,11 @@ class SayriCore:
     def interrupt(self) -> None:
         """Halt any active speech / generation / listening."""
         self._current_query_id += 1
+        # A question still on screen has to be answered by the interruption
+        # itself. The agent's thread is parked waiting for it, so leaving it
+        # there would hold the turn open and the next question would queue
+        # behind a prompt nobody is going to look at any more.
+        self.engine.broker.cancel_session(self.active_session_id)
         self.tts.cancel()
         sound.stop_all()
         self._set_busy(False)
@@ -582,6 +587,12 @@ class SayriCore:
                 on_tool_start=_on_tool_start,
                 on_tool_finish=_on_tool_finish,
                 on_error=_on_error,
+                # This turn came in over a gateway, so there is no panel to show
+                # a question on and no way to answer one. Anything needing
+                # approval is refused outright rather than parked behind a prompt
+                # the sender will never see, which would also outlive the 45
+                # seconds waited on below.
+                approvable=False,
             )
             done_event.wait(timeout=45.0)
 

@@ -17,6 +17,78 @@ from sayri.domain.models import (
 )
 
 
+# ── the sandbox, to and from its file ──────────────────────────────
+#
+# The agent file is the only place an agent's permissions are written down, so
+# it has to carry the whole sandbox rather than the two or three fields some
+# caller happened to need. Listing fields here is how permission rules quietly
+# disappear: somebody adds a rule to the JSON by hand, opens the agent in the
+# panel to fix the name, and the save drops the rule with no error anywhere.
+
+def _sandbox_to_dict(cfg: SandboxConfig) -> dict:
+    return {
+        "level": cfg.level.value,
+        "timeout_seconds": cfg.timeout_seconds,
+        "isolated_dir": cfg.isolated_dir,
+        "allow_network": cfg.allow_network,
+        "allowed_binaries": list(cfg.allowed_binaries),
+        "blocked_binaries": list(cfg.blocked_binaries),
+        "permission_rules": [dict(r) for r in cfg.permission_rules],
+        "ask_before_run": bool(cfg.ask_before_run),
+    }
+
+
+def _sandbox_from_dict(raw: Any, level: SandboxLevel) -> SandboxConfig:
+    """Read a stored sandbox, defaulting each field from the model.
+
+    A file written by an older Sayri has no permission rules and no switch, and
+    the absence means the defaults — not a reason to refuse the agent.
+    """
+    data = raw if isinstance(raw, dict) else {}
+
+    def _list(key: str) -> List[str]:
+        value = data.get(key)
+        if not isinstance(value, list):
+            return []
+        return [str(v) for v in value if str(v).strip()]
+
+    def _rules(key: str) -> List[dict]:
+        """Keep the entries that are shaped like a rule, drop the rest.
+
+        Only the shape is checked here. Whether the effect is one Sayri knows
+        is the permission layer's business, and it drops what it cannot use at
+        check time — a job this function should not duplicate. What matters
+        here is not writing junk back out, because a junk entry that survives
+        one save survives every save after it.
+        """
+        value = data.get(key)
+        if not isinstance(value, list):
+            return []
+        out = []
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            if all(str(entry.get(k, "")).strip() for k in ("action", "resource", "effect")):
+                out.append(dict(entry))
+        return out
+
+    default = SandboxConfig(level=level)
+    return SandboxConfig(
+        level=level,
+        timeout_seconds=int(data.get("timeout_seconds", default.timeout_seconds) or 0)
+                        or default.timeout_seconds,
+        isolated_dir=data.get("isolated_dir") or None,
+        allow_network=bool(data.get("allow_network", default.allow_network)),
+        allowed_binaries=_list("allowed_binaries"),
+        # An absent list keeps the model's built-in refusals. An empty list means
+        # the user asked for none, which is a different statement and is kept.
+        blocked_binaries=_list("blocked_binaries") if "blocked_binaries" in data
+                           else list(default.blocked_binaries),
+        permission_rules=_rules("permission_rules"),
+        ask_before_run=bool(data.get("ask_before_run", default.ask_before_run)),
+    )
+
+
 class AgentCreator:
     """Automates creation of sub-agent profiles and skills from natural language."""
 
@@ -62,17 +134,13 @@ class AgentCreator:
                         temperature=float(data.get("model", {}).get("temperature", 0.7)),
                         max_tokens=data.get("model", {}).get("max_tokens"),
                     ),
-                    sandbox=SandboxConfig(
-                        level=sandbox_lvl,
-                        timeout_seconds=int(data.get("sandbox", {}).get("timeout_seconds", 10)),
-                        allow_network=bool(data.get("sandbox", {}).get("allow_network", True)),
-                    ),
+                    sandbox=_sandbox_from_dict(data.get("sandbox", {}), sandbox_lvl),
                     allowed_skills=data.get("allowed_skills", []),
                     allowed_plugins=data.get("allowed_plugins", []),
                     allowed_tools=data.get("allowed_tools", []),
                     custom_instructions=data.get("custom_instructions", ""),
-                    investigation_loop=bool(data.get("investigation_loop", True)),
-                    reinforcement_learning=bool(data.get("reinforcement_learning", True)),
+                    investigation_loop=bool(data.get("investigation_loop", False)),
+                    reinforcement_learning=bool(data.get("reinforcement_learning", False)),
                     created_at=data.get("created_at", time.time()),
                     is_builtin=is_def,
                 )
@@ -123,16 +191,12 @@ class AgentCreator:
                 "temperature": profile.model.temperature,
                 "max_tokens": profile.model.max_tokens,
             },
-            "sandbox": {
-                "level": profile.sandbox.level.value,
-                "timeout_seconds": profile.sandbox.timeout_seconds,
-                "allow_network": profile.sandbox.allow_network,
-            },
+            "sandbox": _sandbox_to_dict(profile.sandbox),
             "allowed_skills": profile.allowed_skills,
             "allowed_plugins": getattr(profile, "allowed_plugins", []),
             "allowed_tools": profile.allowed_tools,
-            "investigation_loop": getattr(profile, "investigation_loop", True),
-            "reinforcement_learning": getattr(profile, "reinforcement_learning", True),
+            "investigation_loop": bool(getattr(profile, "investigation_loop", False)),
+            "reinforcement_learning": bool(getattr(profile, "reinforcement_learning", False)),
             "created_at": profile.created_at,
         }
 
@@ -166,6 +230,8 @@ class AgentCreator:
         cls,
         prompt_text: str,
         max_allowed_level: SandboxLevel = SandboxLevel.LEVEL_3_HOST_USER,
+        inherits_investigation_loop: bool = False,
+        inherits_learning: bool = False,
     ) -> Tuple[bool, str, Optional[AgentProfile]]:
         """Parses natural language prompt into a structured AgentProfile with privilege containment."""
         # Non-escalation enforcement: Restricted sandboxes cannot create subagents
@@ -234,8 +300,12 @@ class AgentCreator:
                 timeout_seconds=12,
             ),
             allowed_tools=[] if sandbox_level == SandboxLevel.LEVEL_0_NO_EXEC else ["bash"],
-            investigation_loop=True,
-            reinforcement_learning=True,
+            # A sub-agent inherits the caller's stance on searching and on
+            # learning, rather than being born ready to search. A user who
+            # turned the loop off did not mean "except for the agents you spawn
+            # by voice".
+            investigation_loop=bool(inherits_investigation_loop),
+            reinforcement_learning=bool(inherits_learning),
         )
 
         saved_path = cls.save_agent(profile)

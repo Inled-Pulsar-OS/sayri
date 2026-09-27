@@ -1484,8 +1484,8 @@ class SayriCajita(Gtk.Box):
 
             sub = Gtk.Label()
             sb_text = ag.sandbox.level.value
-            loop_badge = " • <span foreground='#38bdf8'>🔄 Autonomous Loop</span>" if getattr(ag, "investigation_loop", True) else ""
-            pref_badge = " • <span foreground='#a855f7'>🧠 Preference Learning</span>" if getattr(ag, "reinforcement_learning", True) else ""
+            loop_badge = " • <span foreground='#38bdf8'>🔄 Autonomous Loop</span>" if getattr(ag, "investigation_loop", False) else ""
+            pref_badge = " • <span foreground='#a855f7'>🧠 Preference Learning</span>" if getattr(ag, "reinforcement_learning", False) else ""
             sub.set_markup(f"<span foreground='#94a3b8' size='9000'>{sb_text}{loop_badge}{pref_badge} • Model: <tt>{GLib.markup_escape_text(ag.model.model_name)}</tt></span>")
             sub.set_halign(Gtk.Align.START)
 
@@ -4456,7 +4456,7 @@ class SayriCajita(Gtk.Box):
         loop_row.append(loop_v)
 
         loop_switch = Gtk.Switch()
-        loop_switch.set_active(getattr(profile, "investigation_loop", True))
+        loop_switch.set_active(getattr(profile, "investigation_loop", False))
         loop_switch.set_valign(Gtk.Align.CENTER)
         loop_row.append(loop_switch)
         box.append(loop_row)
@@ -4479,7 +4479,7 @@ class SayriCajita(Gtk.Box):
         pref_row.append(pref_v)
 
         pref_switch = Gtk.Switch()
-        pref_switch.set_active(getattr(profile, "reinforcement_learning", True))
+        pref_switch.set_active(getattr(profile, "reinforcement_learning", False))
         pref_switch.set_valign(Gtk.Align.CENTER)
         pref_row.append(pref_switch)
         box.append(pref_row)
