@@ -4,7 +4,16 @@
 #   rpmbuild -bb packaging/sayri.spec
 # ==============================================================================
 
-%global sayri_version 0.1.3
+# The version the build script passes with --define wins over this default; a
+# plain `rpmbuild -bb packaging/sayri.spec` still works and gets the default.
+# It used to be a bare `%global sayri_version`, which rpm resolves *after* any
+# --define from the command line, so the spec's own value silently won: the
+# build asked for sayri-0.1.3.tar.gz while the script had written
+# sayri-0.1.36.tar.gz, and the rpm failed in %prep on every version above
+# 0.1.3. There is no .rpm in dist/ to show for it.
+%global sayri_fallback_version 0.1.36
+%global sayri_version %{?sayri_version:%{sayri_version}}
+%global sayri_version %{!?sayri_version:%{sayri_fallback_version}}
 
 Name:           sayri
 Version:        %{sayri_version}
@@ -92,5 +101,8 @@ fi
 exit 0
 
 %changelog
+* Sun Sep 27 2026 Jaime <info@inled.es> - 0.1.36-1
+- Let the build script's version reach the spec, so the rpm stops asking for a
+  tarball that was never written
 * Thu Sep 03 2026 Jaice <info@inled.es> - 0.1.3-1
 - Initial RPM packaging of Sayri 0.1.3
