@@ -42,7 +42,7 @@ prepare_staging() {
     last_staging="$STAGING"
     log "Staging tree in $STAGING"
     cp -a "$ROOT/usr" "$STAGING/usr"
-    cp -a "$ROOT/etc" "$STAGING/etc"
+    [ -d "$ROOT/etc" ] && cp -a "$ROOT/etc" "$STAGING/etc"
     # Debian control (only meaningful for the .deb, harmless elsewhere).
     mkdir -p "$STAGING/DEBIAN"
     sed -E "s/^Version:.*/Version: $VERSION/" "$ROOT/DEBIAN/control" > "$STAGING/DEBIAN/control"
@@ -78,9 +78,11 @@ build_rpm() {
     rpmbuilddir="$(mktemp -d "${TMPDIR:-/tmp}/sayri-rpm.XXXXXX")"
     # Copy the payload into the spec's expected SOURCES layout.
     mkdir -p "$rpmbuilddir/SOURCES"
+    local tar_sources=(README.md packaging usr)
+    [ -d "$ROOT/etc" ] && tar_sources+=(etc)
     tar -C "$ROOT" --exclude='dist' --exclude='web/node_modules' --exclude='web/.expo' \
         --exclude='.git' -cf "$rpmbuilddir/SOURCES/sayri-$VERSION.tar.gz" \
-        README.md packaging usr etc
+        "${tar_sources[@]}"
     rpmbuild --define "_topdir $rpmbuilddir" \
              --define "sayri_version $VERSION" \
              -bb "$HERE/sayri.spec"
@@ -101,7 +103,7 @@ build_arch() {
     cp "$HERE/PKGBUILD" "$archdir/PKGBUILD"
     cp "$ROOT/README.md" "$archdir/README.md"
     tar -C "$ROOT" -czf "$archdir/usr.tar.gz" usr
-    tar -C "$ROOT" -czf "$archdir/etc.tar.gz" etc
+    [ -d "$ROOT/etc" ] && tar -C "$ROOT" -czf "$archdir/etc.tar.gz" etc
     sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$archdir/PKGBUILD"
     ( cd "$archdir" && makepkg -f --noconfirm --nodeps )
     cp "$archdir"/sayri-*.pkg.tar.* "$DIST/"

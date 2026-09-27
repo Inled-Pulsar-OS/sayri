@@ -80,16 +80,15 @@ modules:
         url: https://download.gnome.org/sources/pygobject/3.50/pygobject-3.50.0.tar.xz
         sha256: 8d836e75b5a881d457ee1622cae4a32bcdba28a0ba562193adb3bbb472472212
 
-  # The Sayri package tree. usr/bin -> /app/bin, usr/share -> /app/share,
-  # etc -> /app/etc. The bundled `sayri` wrapper resolves its lib via
+  # The Sayri package tree. usr/bin -> /app/bin, usr/share -> /app/share.
+  # The bundled `sayri` wrapper resolves its lib via
   # <script_dir>/../share/sayri/lib so launching /app/bin/sayri works as-is.
   - name: sayri
     buildsystem: simple
     build-commands:
       - cp -a usr/bin/. /app/bin/
       - cp -a usr/share/. /app/share/
-      - mkdir -p /app/etc/xdg/autostart /app/share/applications /app/share/icons/hicolor
-      - cp -a etc/xdg/autostart/sayri.desktop /app/etc/xdg/autostart/
+      - mkdir -p /app/share/applications /app/share/icons/hicolor
       - chmod 0755 /app/bin/sayri /app/bin/sayri-indicator /app/bin/sayri-settings /app/bin/sayri-skills /app/bin/sayri-plugins
       - cp usr/share/applications/sayri.desktop /app/share/applications/
       - cp -a usr/share/icons/hicolor/. /app/share/icons/hicolor/
@@ -97,6 +96,3 @@ modules:
       - type: dir
         path: ../usr
         dest: usr
-      - type: dir
-        path: ../etc
-        dest: etc

@@ -336,45 +336,44 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
 
             root = libx11.XDefaultRootWindow(dpy)
 
-            # Determine primary monitor geometry in exact X11 root window pixels
+            # Determine monitor geometry in exact X11 root window pixels
             mon_x, mon_y, mon_w, mon_h = 0, 0, 1920, 1080
             found_mon = False
 
-            # 1. First Priority: query GNOME Mutter DBus for the true primary monitor geometry
-            p_geom = get_primary_geometry_gnome()
-            if p_geom:
-                mon_x, mon_y, mon_w, mon_h = p_geom
-                found_mon = True
-
-            if not found_mon and libxrandr:
+            # 1. First Priority: Native XRandR monitor geometry (matches X11/XWayland root coordinate space)
+            if libxrandr:
                 nmon = ctypes.c_int()
                 mons = libxrandr.XRRGetMonitors(dpy, root, 1, ctypes.byref(nmon))
                 if mons and nmon.value > 0:
                     target_m = None
-                    # A. Priority 1: explicitly designated primary monitor
-                    for i in range(nmon.value):
-                        if mons[i].primary:
-                            target_m = mons[i]
-                            break
-                    # B. Priority 2: pointer / active monitor
+                    
+                    # A. Priority 1: Monitor containing the pointer / active workspace
+                    root_ret, child_ret = ctypes.c_ulong(), ctypes.c_ulong()
+                    rx, ry, wx, wy = ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+                    mask = ctypes.c_uint()
+                    if libx11.XQueryPointer(dpy, root, ctypes.byref(root_ret), ctypes.byref(child_ret),
+                                            ctypes.byref(rx), ctypes.byref(ry), ctypes.byref(wx), ctypes.byref(wy),
+                                            ctypes.byref(mask)):
+                        for i in range(nmon.value):
+                            m = mons[i]
+                            if m.x <= rx.value < m.x + m.width and m.y <= ry.value < m.y + m.height:
+                                target_m = m
+                                break
+
+                    # B. Priority 2: explicitly designated primary monitor
                     if not target_m:
-                        root_ret, child_ret = ctypes.c_ulong(), ctypes.c_ulong()
-                        rx, ry, wx, wy = ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
-                        mask = ctypes.c_uint()
-                        if libx11.XQueryPointer(dpy, root, ctypes.byref(root_ret), ctypes.byref(child_ret),
-                                                ctypes.byref(rx), ctypes.byref(ry), ctypes.byref(wx), ctypes.byref(wy),
-                                                ctypes.byref(mask)):
-                            for i in range(nmon.value):
-                                m = mons[i]
-                                if m.x <= rx.value < m.x + m.width and m.y <= ry.value < m.y + m.height:
-                                    target_m = m
-                                    break
+                        for i in range(nmon.value):
+                            if mons[i].primary:
+                                target_m = mons[i]
+                                break
+
                     # C. Priority 3: monitor at (0, 0)
                     if not target_m:
                         for i in range(nmon.value):
                             if mons[i].x == 0 and mons[i].y == 0:
                                 target_m = mons[i]
                                 break
+
                     # D. Fallback: first monitor
                     if not target_m:
                         target_m = mons[0]
@@ -386,6 +385,14 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
                     found_mon = True
                     libxrandr.XRRFreeMonitors(mons)
 
+            # 2. Fallback: GNOME Mutter DBus if XRandR unavailable
+            if not found_mon:
+                p_geom = get_primary_geometry_gnome()
+                if p_geom:
+                    mon_x, mon_y, mon_w, mon_h = p_geom
+                    found_mon = True
+
+            # 3. Fallback: GDK Monitor
             if not found_mon:
                 gdk_mon = get_primary_monitor_gdk()
                 if gdk_mon:
