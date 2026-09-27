@@ -20,44 +20,47 @@
     }
     #stage {
       position: absolute;
-      bottom: 20px;
-      right: 20px;
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 8px;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
     }
     .clippy {
       cursor: grab;
       filter: drop-shadow(2px 4px 8px rgba(0,0,0,0.35));
+      pointer-events: auto;
     }
     .clippy:active {
       cursor: grabbing;
     }
     /* Retro Windows 98 / Office Speech Balloon */
     .balloon-wrapper {
-      position: relative;
-      max-width: 340px;
-      min-width: 240px;
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      max-width: 360px;
+      min-width: 220px;
       background-color: #ffffdd;
       border: 1.5px solid #000000;
       border-radius: 8px;
       box-shadow: 3px 4px 10px rgba(0,0,0,0.3);
-      padding: 12px 14px;
+      padding: 10px 12px;
       color: #111111;
       font-size: 13px;
       line-height: 1.4;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      transition: all 0.2s ease;
+      gap: 6px;
+      z-index: 20000;
+      pointer-events: auto;
     }
     .balloon-wrapper::after {
       content: "";
       position: absolute;
-      bottom: -12px;
-      right: 48px;
-      border-width: 12px 10px 0 10px;
+      bottom: -10px;
+      right: 50px;
+      border-width: 10px 8px 0 8px;
       border-style: solid;
       border-color: #ffffdd transparent transparent transparent;
       display: block;
@@ -66,9 +69,9 @@
     .balloon-wrapper::before {
       content: "";
       position: absolute;
-      bottom: -14px;
-      right: 47px;
-      border-width: 14px 11px 0 11px;
+      bottom: -12px;
+      right: 49px;
+      border-width: 12px 9px 0 9px;
       border-style: solid;
       border-color: #000000 transparent transparent transparent;
       display: block;
@@ -173,8 +176,10 @@
       <div id="balloon-text" class="balloon-text"></div>
       <div id="xui-area" class="xui-container"></div>
       <div class="input-row">
-        <input type="text" id="user-input" placeholder="Pregúntame algo..." autocomplete="off">
-        <button id="send-btn">➤</button>
+        <button id="settings-btn" title="Ajustes de Sayri y selección de personaje">⚙️</button>
+        <button id="mic-btn" title="Escuchar por voz (Push to talk)">🎙️</button>
+        <input type="text" id="user-input" placeholder="Pregúntame algo a Sayri..." autocomplete="off">
+        <button id="send-btn" title="Enviar consulta">➤</button>
       </div>
     </div>
     <div id="agent-anchor"></div>
@@ -198,20 +203,35 @@
     async function loadAgent(agentName) {
       if (currentAgentInstance) {
         try {
-          currentAgentInstance.hide();
+          currentAgentInstance.dispose();
         } catch (e) {}
       }
       currentAgentName = agentName;
       const agentKey = Object.keys(allAgents).find(k => k.toLowerCase() === agentName.toLowerCase()) || "Clippy";
       const agentDef = allAgents[agentKey] || allAgents.Clippy;
 
-      document.getElementById("agent-anchor").innerHTML = "";
+      currentAgentInstance = await initAgent(agentDef);
+      currentAgentInstance.show(true);
 
-      currentAgentInstance = await initAgent(agentDef, {
-        container: document.getElementById("agent-anchor")
-      });
-      currentAgentInstance.show();
-      currentAgentInstance.play("Wave");
+      // Explicitly position the agent inside the visible canvas
+      const agEl = currentAgentInstance._el;
+      if (agEl) {
+        agEl.style.position = "absolute";
+        agEl.style.left = Math.max(20, (window.innerWidth - 140)) + "px";
+        agEl.style.top = Math.max(20, (window.innerHeight - 130)) + "px";
+        agEl.style.display = "block";
+        agEl.style.zIndex = "10005";
+      }
+
+      // Hide clippyjs internal basic balloon if present
+      if (currentAgentInstance._balloon && currentAgentInstance._balloon._balloon) {
+        currentAgentInstance._balloon._balloon.style.display = "none";
+      }
+
+      currentAgentInstance.play("Show");
+      setTimeout(() => {
+        if (currentAgentInstance) currentAgentInstance.play("Wave");
+      }, 500);
 
       showBalloon(`¡Hola! Soy tu asistente Sayri (${agentName}). ¿En qué puedo ayudarte?`);
     }
@@ -330,6 +350,24 @@
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriPrompt) {
         window.webkit.messageHandlers.sayriPrompt.postMessage(txt);
       }
+    }
+
+    const settingsBtn = document.getElementById("settings-btn");
+    const micBtn = document.getElementById("mic-btn");
+
+    if (settingsBtn) {
+      settingsBtn.onclick = () => {
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
+          window.webkit.messageHandlers.sayriAction.postMessage("open_settings");
+        }
+      };
+    }
+    if (micBtn) {
+      micBtn.onclick = () => {
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
+          window.webkit.messageHandlers.sayriAction.postMessage("toggle_mic");
+        }
+      };
     }
 
     sendBtn.onclick = sendPrompt;

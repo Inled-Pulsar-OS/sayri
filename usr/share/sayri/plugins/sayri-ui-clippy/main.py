@@ -23,24 +23,35 @@ if os.path.isdir(sayri_lib) and sayri_lib not in sys.path:
 
 try:
     import gi
-    gi.require_version("Gtk", "4.0")
-    gi.require_version("WebKit", "6.0")
-    from gi.repository import Gdk, GLib, Gtk, WebKit
-    _GTK_VERSION = 4
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Gdk", "3.0")
+    gi.require_version("WebKit2", "4.1")
+    from gi.repository import Gdk, GLib, Gtk
+    from gi.repository import WebKit2 as WebKit
+    _GTK_VERSION = 3
 except Exception:
     try:
         import gi
-        gi.require_version("Gtk", "3.0")
-        gi.require_version("WebKit2", "4.1")
-        from gi.repository import Gdk, GLib, Gtk
-        from gi.repository import WebKit2 as WebKit
-        _GTK_VERSION = 3
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Gdk", "4.0")
+        gi.require_version("WebKit", "6.0")
+        from gi.repository import Gdk, GLib, Gtk, WebKit
+        _GTK_VERSION = 4
     except Exception as err:
         print(f"[retro-ui] GTK/WebKit not available: {err}", file=sys.stderr)
         sys.exit(1)
 
+try:
+    gi.require_version("Gtk4LayerShell", "1.0")
+    from gi.repository import Gtk4LayerShell as LayerShell
+    _LAYER_OK = True
+except Exception:
+    LayerShell = None
+    _LAYER_OK = False
+
 from sayri import config as sayri_config
 from sayri import ipc, paths, sysinfo
+import subprocess
 
 AVAILABLE_CHARACTERS = [
     ("Clippy", "📎 Clippy (Paperclip)"),
@@ -74,29 +85,74 @@ class RetroCompanionWindow:
         self.current_char = p_cfg.get("character") or sayri_config.config.get_string("ui.clippy", "character", "Clippy")
         self.client = ipc.SayriClient()
 
-        if _GTK_VERSION == 4:
-            self.win = Gtk.Window()
-            self.win.set_title("Sayri Companion")
-            self.win.set_decorated(False)
-            self.win.set_default_size(440, 360)
-            self.webview = WebKit.WebView()
-            self.win.set_child(self.webview)
-        else:
+        if _GTK_VERSION == 3:
             self.win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
             self.win.set_title("Sayri Companion")
             self.win.set_decorated(False)
+            self.win.set_type_hint(Gdk.WindowTypeHint.DOCK)
             self.win.set_keep_above(True)
             self.win.set_app_paintable(True)
             self.win.set_skip_taskbar_hint(True)
             self.win.set_skip_pager_hint(True)
-            self.win.set_default_size(440, 360)
+            self.win.set_default_size(440, 380)
+
+            screen = self.win.get_screen()
+            visual = screen.get_rgba_visual()
+            if visual:
+                self.win.set_visual(visual)
+
+            css_provider = Gtk.CssProvider()
+            css_provider.load_from_data(b"window, .background { background-color: rgba(0,0,0,0); background-image: none; border: none; box-shadow: none; }")
+            Gtk.StyleContext.add_provider_for_screen(
+                screen,
+                css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+
             self.webview = WebKit.WebView()
             self.win.add(self.webview)
+        else:
+            self.win = Gtk.Window()
+            self.win.set_title("Sayri Companion")
+            self.win.set_decorated(False)
+            self.win.set_default_size(440, 380)
+
+            # CSS Provider for true GTK4 transparency
+            css_provider = Gtk.CssProvider()
+            css_provider.load_from_data(b"window, .background, widget { background-color: transparent !important; background: none !important; }")
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(),
+                css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+
+            if _LAYER_OK and LayerShell.is_supported():
+                LayerShell.init_for_window(self.win)
+                LayerShell.set_layer(self.win, LayerShell.Layer.OVERLAY)
+                LayerShell.set_anchor(self.win, LayerShell.Edge.BOTTOM, True)
+                LayerShell.set_anchor(self.win, LayerShell.Edge.RIGHT, True)
+                LayerShell.set_margin(self.win, LayerShell.Edge.BOTTOM, 24)
+                LayerShell.set_margin(self.win, LayerShell.Edge.RIGHT, 24)
+                LayerShell.set_exclusive_zone(self.win, -1)
+                LayerShell.set_keyboard_mode(self.win, LayerShell.KeyboardMode.ON_DEMAND)
+
+            self.webview = WebKit.WebView()
+            self.win.set_child(self.webview)
 
         # Transparent background settings
         bg = Gdk.RGBA()
         bg.parse("rgba(0,0,0,0)")
         self.webview.set_background_color(bg)
+
+        # WebKit settings
+        settings = self.webview.get_settings()
+        settings.set_enable_javascript(True)
+        settings.set_allow_file_access_from_file_urls(True)
+        settings.set_allow_universal_access_from_file_urls(True)
+        if hasattr(settings, "set_enable_developer_extras"):
+            settings.set_enable_developer_extras(True)
+        if hasattr(settings, "set_enable_write_console_messages_to_stdout"):
+            settings.set_enable_write_console_messages_to_stdout(True)
 
         # Setup WebKit Message Handlers
         ucm = self.webview.get_user_content_manager()
@@ -106,8 +162,12 @@ class RetroCompanionWindow:
         ucm.connect("script-message-received::sayriAction", self._on_js_action)
 
         def _on_load_changed(webview, load_event):
-            if load_event == WebKit.LoadEvent.FINISHED:
-                self._dispatch_js(f"window.switchAgent({json.dumps(self.current_char)})")
+            if _GTK_VERSION == 3:
+                if load_event == WebKit.LoadEvent.FINISHED:
+                    self._dispatch_js(f"window.switchAgent({json.dumps(self.current_char)})")
+            else:
+                if load_event == WebKit.LoadEvent.FINISHED:
+                    self._dispatch_js(f"window.switchAgent({json.dumps(self.current_char)})")
         self.webview.connect("load-changed", _on_load_changed)
 
         # Right click gesture / click
@@ -143,7 +203,7 @@ class RetroCompanionWindow:
                 screen = Gdk.Screen.get_default()
                 if screen:
                     geom = screen.get_monitor_geometry(screen.get_primary_monitor())
-                    self.win.move(geom.x + geom.width - 460, geom.y + geom.height - 380)
+                    self.win.move(geom.x + geom.width - 460, geom.y + geom.height - 400)
         except Exception:
             pass
 
@@ -170,7 +230,7 @@ class RetroCompanionWindow:
         threading.Thread(target=_send, daemon=True).start()
 
     def _on_js_action(self, _ucm, msg) -> None:
-        """User clicked an XUI action button."""
+        """User clicked an XUI action button or UI control."""
         try:
             if _GTK_VERSION == 4:
                 action_id = msg.get_js_value().to_string()
@@ -178,6 +238,14 @@ class RetroCompanionWindow:
                 action_id = msg.get_value().to_string()
         except Exception:
             action_id = str(msg)
+
+        if action_id == "open_settings":
+            subprocess.Popen(["sayri-settings"], **sysinfo.spawn_flags())
+            return
+        elif action_id == "toggle_mic":
+            self._toggle_mic()
+            return
+
         try:
             self.client.call("xui_action", {"action": action_id})
         except Exception:
