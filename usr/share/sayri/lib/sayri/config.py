@@ -247,7 +247,7 @@ class Config:
             print(f"[sayri] warning: could not save config to {paths.config_file()}")
 
     def _set(self, group: str, key: str, value: object) -> None:
-        kind = _TYPES[group][key]
+        kind = _TYPES.get(group, {}).get(key, "string")
         if kind == "string":
             self._kf.set_string(group, key, str(value))
         elif kind == "int":
@@ -258,8 +258,8 @@ class Config:
             self._kf.set_boolean(group, key, bool(value))
 
     # ------------------------------------------------------------- getters
-    def get(self, group: str, key: str):
-        kind = _TYPES[group][key]
+    def get(self, group: str, key: str, default: object = None):
+        kind = _TYPES.get(group, {}).get(key, "string")
         try:
             if kind == "string":
                 return self._kf.get_string(group, key)
@@ -269,22 +269,37 @@ class Config:
                 return self._kf.get_double(group, key)
             if kind == "bool":
                 return self._kf.get_boolean(group, key)
-        except _MissingKeyError:
-            # Missing key after a config edit: fall back to default.
-            return DEFAULTS[group][key]
-        return DEFAULTS[group][key]
+        except Exception:
+            if default is not None:
+                return default
+            return DEFAULTS.get(group, {}).get(key, "")
+        return DEFAULTS.get(group, {}).get(key, default)
 
-    def get_string(self, group: str, key: str) -> str:
-        return str(self.get(group, key))
+    def get_string(self, group: str, key: str, default: str = "") -> str:
+        return str(self.get(group, key, default))
 
-    def get_int(self, group: str, key: str) -> int:
-        return int(self.get(group, key))
+    def get_int(self, group: str, key: str, default: int = 0) -> int:
+        return int(self.get(group, key, default))
 
-    def get_float(self, group: str, key: str) -> float:
-        return float(self.get(group, key))
+    def get_float(self, group: str, key: str, default: float = 0.0) -> float:
+        return float(self.get(group, key, default))
 
-    def get_bool(self, group: str, key: str) -> bool:
-        return bool(self.get(group, key))
+    def get_bool(self, group: str, key: str, default: bool = False) -> bool:
+        return bool(self.get(group, key, default))
+
+    def is_plugin_enabled(self, plugin_id: str) -> bool:
+        try:
+            val = self._kf.get_string("plugins_enabled", plugin_id)
+            return str(val).strip().lower() not in ("0", "false", "no", "off")
+        except Exception:
+            return True
+
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> None:
+        try:
+            self._kf.set_string("plugins_enabled", plugin_id, str(bool(enabled)).lower())
+            self.save()
+        except Exception as exc:
+            print(f"[sayri-config] error setting plugin enabled: {exc}")
 
     def set(self, group: str, key: str, value: object, persist: bool = True) -> None:
         self._set(group, key, value)

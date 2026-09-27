@@ -1645,6 +1645,37 @@ class SayriCajita(Gtk.Box):
                 sec_badge.set_markup("<span foreground='#f59e0b' size='8500' weight='600'>⚠️ Requires Host L3</span>")
             header_row.append(sec_badge)
 
+            # Plugin Enable / Disable Switch
+            pid = pl.get("id", "")
+            cfg = getattr(self.app, "cfg", None)
+            is_active = cfg.is_plugin_enabled(pid) if cfg and hasattr(cfg, "is_plugin_enabled") else True
+
+            sw = Gtk.Switch()
+            sw.set_valign(Gtk.Align.CENTER)
+            sw.set_active(is_active)
+
+            def _on_sw_toggled(widget, _gparam, p_id=pid, p_meta=pl):
+                active = widget.get_active()
+                if cfg and hasattr(cfg, "set_plugin_enabled"):
+                    cfg.set_plugin_enabled(p_id, active)
+                # If UI plugin, set as default UI or toggle
+                if p_meta.get("type") == "ui" or "ui" in p_meta or p_id.startswith("sayri-ui-"):
+                    if active and cfg:
+                        cfg.set_string("ui", "default_ui", p_id)
+                # If service plugin, start or stop
+                if p_meta.get("service"):
+                    try:
+                        from sayri import plugin_service
+                        if active:
+                            plugin_service.start_service(p_meta)
+                        else:
+                            plugin_service.stop_service(p_meta)
+                    except Exception as exc:
+                        print(f"[cajita] error toggling plugin service {p_id}: {exc}")
+
+            sw.connect("notify::active", _on_sw_toggled)
+            header_row.append(sw)
+
             # Settings / Sandbox configuration button
             cfg_btn = Gtk.Button()
             cfg_btn.set_child(_svg_icon(SVG_SETTINGS))
@@ -1677,18 +1708,31 @@ class SayriCajita(Gtk.Box):
 
     # ── Plugin status & download progress (local gateway plugins) ──
     def _append_plugin_status(self, box: Gtk.Box, manifest: dict, p_dir: Optional[str]) -> None:
-        """Live status plus in-UI download/start progress for entrypoint=gateway.py plugins."""
+        """Live status plus in-UI controls (restricted to service/prismml plugins)."""
+        pid = manifest.get("id", "")
+        is_prism = pid == "prismml" or bool(manifest.get("ui", {}).get("prismml"))
+        is_ui = manifest.get("type") == "ui" or "ui" in manifest or pid.startswith("sayri-ui-")
+        svc = None
+        if manifest:
+            try:
+                from sayri import plugin_service as _psvc
+                svc = _psvc.service_block(manifest)
+            except Exception:
+                svc = None
+
         gate = None
         if p_dir and manifest:
             cand = Path(p_dir) / (manifest.get("entrypoint") or "")
             if cand.is_file():
                 gate = cand
-        if gate is None:
+
+        # Only show server download/management section if it's PrismML or has a managed background service
+        if not is_prism and not svc and not is_ui:
             return
 
         head = Gtk.Label()
         head.set_halign(Gtk.Align.START)
-        head.set_markup("<span weight='700' size='9500' foreground='#1e74fb'>PLUGIN STATUS</span>")
+        head.set_markup("<span weight='700' size='9500' foreground='#1e74fb'>PLUGIN STATUS &amp; CONTROLS</span>")
         box.append(head)
 
         st_lbl = Gtk.Label()
@@ -1697,138 +1741,155 @@ class SayriCajita(Gtk.Box):
         st_lbl.set_selectable(True)
         st_lbl.set_wrap(True)
         st_lbl.add_css_class("sayri-terminal-label")
-        st_lbl.set_markup("<span size='8000' foreground='#94a3b8'>checking…</span>")
+        st_lbl.set_markup("<span size='8000' foreground='#94a3b8'>Ready</span>")
         box.append(st_lbl)
 
-        prog = Gtk.ProgressBar()
-        prog.set_visible(False)
-        box.append(prog)
+        # UI Plugin controls
+        if is_ui:
+            ui_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            ui_row.set_margin_top(4)
 
-        run_lbl = Gtk.Label()
-        run_lbl.set_halign(Gtk.Align.START)
-        run_lbl.set_xalign(0.0)
-        run_lbl.set_wrap(True)
-        run_lbl.set_markup("<span size='8000' foreground='#64748b'>·</span>")
-        box.append(run_lbl)
+            btn_launch_ui = Gtk.Button(label=f"Launch {manifest.get('name', pid)}")
+            btn_launch_ui.add_css_class("sayri-action-btn")
+            btn_launch_ui.add_css_class("primary")
 
-        running = [False]
-        poll_id = [None]
+            def _launch_ui_proc(_b):
+                cfg = getattr(self.app, "cfg", None)
+                if cfg:
+                    cfg.set_string("ui", "default_ui", pid)
+                subprocess.Popen([sys.executable, str(gate or (Path(p_dir) / "main.py"))], **sysinfo.spawn_flags())
+                st_lbl.set_markup(f"<span size='8000' foreground='#86efac'>✓ {GLib.markup_escape_text(manifest.get('name', pid))} launched</span>")
 
-        def _show(text: str, color: str = "#cbd5e1") -> None:
-            st_lbl.set_markup(f"<span size='8000' foreground='{color}'>{GLib.markup_escape_text(text)}</span>")
+            btn_launch_ui.connect("clicked", _launch_ui_proc)
+            ui_row.append(btn_launch_ui)
+            box.append(ui_row)
+            return
 
-        def _refresh(_b=None) -> None:
-            def apply_text(text: str) -> None:
-                _show(text)
+        # PrismML specific downloader & runner
+        if is_prism and gate:
+            prog = Gtk.ProgressBar()
+            prog.set_visible(False)
+            box.append(prog)
 
-            def work() -> None:
-                try:
-                    res = subprocess.run([sys.executable, str(gate), "status"],
-                                         capture_output=True, text=True, timeout=20)
-                    text = (res.stdout or "").strip()
-                    if res.returncode != 0 and res.stderr:
-                        text += "\n" + res.stderr.strip()
-                except Exception as exc:  # noqa: BLE001
-                    text = f"error: {exc}"
-                GLib.idle_add(apply_text, text or "(no output)")
+            run_lbl = Gtk.Label()
+            run_lbl.set_halign(Gtk.Align.START)
+            run_lbl.set_xalign(0.0)
+            run_lbl.set_wrap(True)
+            run_lbl.set_markup("<span size='8000' foreground='#64748b'>·</span>")
+            box.append(run_lbl)
 
-            threading.Thread(target=work, daemon=True).start()
+            running = [False]
+            poll_id = [None]
 
-        def _run(_b=None) -> None:
-            if running[0]:
-                return
-            running[0] = True
-            cfg = {}
-            if p_dir:
-                try:
-                    cfg = json.loads((Path(p_dir) / "prismml.json").read_text(encoding="utf-8"))
-                except Exception:  # noqa: BLE001
-                    cfg = {}
-            fam = cfg.get("family", "ternary")
-            size = cfg.get("size", "8B")
-            quant = cfg.get("quant") or ""
-            cmd = [sys.executable, str(gate), "run"]
-            if quant:
-                cmd += ["--quant", quant]
-            run_lbl.set_markup(
-                f"<span size='8000' foreground='#94a3b8'>Downloading binary + model and starting "
-                f"{fam}/{size} ({quant or 'auto'})…</span>")
-            prog.set_visible(True)
-            prog.pulse()
+            def _show(text: str, color: str = "#cbd5e1") -> None:
+                st_lbl.set_markup(f"<span size='8000' foreground='{color}'>{GLib.markup_escape_text(text)}</span>")
 
-            def apply_line(line: str, pct: Optional[int]) -> None:
-                if "llama-server running" in line or "health:" in line:
-                    prog.set_visible(True)
-                    prog.set_fraction(1.0)
-                    run_lbl.set_markup(
-                        f"<span size='8000' foreground='#86efac'>Server running ✓ — {GLib.markup_escape_text(line[-60:])}</span>")
-                else:
-                    prog.set_visible(True)
-                    if pct is not None:
-                        prog.set_fraction(min(1.0, pct / 100.0))
+            def _refresh(_b=None) -> None:
+                def apply_text(text: str) -> None:
+                    _show(text)
+
+                def work() -> None:
+                    try:
+                        res = subprocess.run([sys.executable, str(gate), "status"],
+                                             capture_output=True, text=True, timeout=20)
+                        text = (res.stdout or "").strip()
+                        if res.returncode != 0 and res.stderr:
+                            text += "\n" + res.stderr.strip()
+                    except Exception as exc:
+                        text = f"error: {exc}"
+                    GLib.idle_add(apply_text, text or "(no output)")
+
+                threading.Thread(target=work, daemon=True).start()
+
+            def _run(_b=None) -> None:
+                if running[0]:
+                    return
+                running[0] = True
+                cfg = {}
+                if p_dir:
+                    try:
+                        cfg = json.loads((Path(p_dir) / "prismml.json").read_text(encoding="utf-8"))
+                    except Exception:
+                        cfg = {}
+                fam = cfg.get("family", "ternary")
+                size = cfg.get("size", "8B")
+                quant = cfg.get("quant") or ""
+                cmd = [sys.executable, str(gate), "run"]
+                if quant:
+                    cmd += ["--quant", quant]
+                run_lbl.set_markup(
+                    f"<span size='8000' foreground='#94a3b8'>Downloading binary + model and starting "
+                    f"{fam}/{size} ({quant or 'auto'})…</span>")
+                prog.set_visible(True)
+                prog.pulse()
+
+                def apply_line(line: str, pct: Optional[int]) -> None:
+                    if "llama-server running" in line or "health:" in line:
+                        prog.set_visible(True)
+                        prog.set_fraction(1.0)
                         run_lbl.set_markup(
-                            f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
-                    elif not line.startswith("health:"):
-                        run_lbl.set_markup(
-                            f"<span size='8000' foreground='#e2e8f0'>{GLib.markup_escape_text(line[-90:])}</span>")
+                            f"<span size='8000' foreground='#86efac'>Server running ✓ — {GLib.markup_escape_text(line[-60:])}</span>")
+                    else:
+                        prog.set_visible(True)
+                        if pct is not None:
+                            prog.set_fraction(min(1.0, pct / 100.0))
+                            run_lbl.set_markup(
+                                f"<span size='8000' foreground='#a5f3fc'>{GLib.markup_escape_text(line[-90:])}</span>")
+                        elif not line.startswith("health:"):
+                            run_lbl.set_markup(
+                                f"<span size='8000' foreground='#e2e8f0'>{GLib.markup_escape_text(line[-90:])}</span>")
 
-            def _poll_status() -> bool:
-                if not running[0]:
-                    return False
-                _refresh()
-                return True
+                def _poll_status() -> bool:
+                    if not running[0]:
+                        return False
+                    _refresh()
+                    return True
 
-            poll_id[0] = GLib.timeout_add_seconds(3, _poll_status)
+                poll_id[0] = GLib.timeout_add_seconds(3, _poll_status)
 
-            def work() -> None:
-                proc = None
-                try:
-                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, text=True, bufsize=1)
-                    buf: list[str] = []
-                    while True:
-                        ch = proc.stdout.read(1)  # type: ignore[union-attr]
-                        if not ch:
-                            break
-                        if ch in "\r\n":
-                            line = "".join(buf)
-                            buf.clear()
-                            if line.strip():
-                                m = re.findall(r"(\d{1,3})\s*%", line)
-                                pct = int(m[-1]) if m else None
-                                GLib.idle_add(apply_line, line.strip(), pct)
-                        else:
-                            buf.append(ch)
-                    proc.wait()
-                except Exception as exc:  # noqa: BLE001
-                    GLib.idle_add(apply_line, f"error: {exc}", None)
-                finally:
-                    running[0] = False
-                    if poll_id[0] is not None:
-                        GLib.idle_add(lambda: GLib.source_remove(poll_id[0]))
-                    GLib.idle_add(_refresh)
+                def work() -> None:
+                    try:
+                        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+                        buf: list[str] = []
+                        while True:
+                            ch = proc.stdout.read(1)
+                            if not ch:
+                                break
+                            if ch in "\r\n":
+                                line = "".join(buf)
+                                buf.clear()
+                                if line.strip():
+                                    m = re.findall(r"(\d{1,3})\s*%", line)
+                                    pct = int(m[-1]) if m else None
+                                    GLib.idle_add(apply_line, line.strip(), pct)
+                            else:
+                                buf.append(ch)
+                        proc.wait()
+                    except Exception as exc:
+                        GLib.idle_add(apply_line, f"error: {exc}", None)
+                    finally:
+                        running[0] = False
+                        if poll_id[0] is not None:
+                            GLib.idle_add(lambda: GLib.source_remove(poll_id[0]))
+                        GLib.idle_add(_refresh)
 
-            threading.Thread(target=work, daemon=True).start()
+                threading.Thread(target=work, daemon=True).start()
 
-        btnr = Gtk.Button(label="Refresh status")
-        btnr.add_css_class("sayri-action-btn")
-        btnr.connect("clicked", _refresh)
-        box.append(btnr)
+            btnr = Gtk.Button(label="Refresh server status")
+            btnr.add_css_class("sayri-action-btn")
+            btnr.connect("clicked", _refresh)
+            box.append(btnr)
 
-        btn_run = Gtk.Button(label="Download & start server (progress below)")
-        btn_run.add_css_class("sayri-action-btn")
-        btn_run.add_css_class("primary")
-        btn_run.connect("clicked", _run)
-        box.append(btn_run)
+            btn_run = Gtk.Button(label="Download & start server (progress below)")
+            btn_run.add_css_class("sayri-action-btn")
+            btn_run.add_css_class("primary")
+            btn_run.connect("clicked", _run)
+            box.append(btn_run)
 
-        # ── Service controls (manifest "service" block): auto-start + start/stop ──
-        svc = None
-        if manifest:
-            try:
-                from sayri import plugin_service as _psvc
-                svc = _psvc.service_block(manifest)
-            except Exception:  # noqa: BLE001
-                svc = None
+            _refresh()
+
+        # Service controls (auto-start + start/stop)
         if svc:
             sw_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             sw_lbl = Gtk.Label()
@@ -1836,10 +1897,10 @@ class SayriCajita(Gtk.Box):
             sw_lbl.set_hexpand(True)
             sw_lbl.set_wrap(True)
             sw_lbl.set_markup("<span size='9000' foreground='#cbd5e1'>Auto-start this server when Sayri starts</span>")
-            sw = Gtk.Switch()
-            sw.set_active(_psvc.service_enabled(manifest))
+            sw_svc = Gtk.Switch()
+            sw_svc.set_active(_psvc.service_enabled(manifest))
             sw_row.append(sw_lbl)
-            sw_row.append(sw)
+            sw_row.append(sw_svc)
             box.append(sw_row)
 
             def _toggle_service(on: bool) -> None:
@@ -1849,17 +1910,16 @@ class SayriCajita(Gtk.Box):
                             _psvc.start_service(manifest)
                         else:
                             _psvc.stop_service(manifest)
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         print(f"[sayri] plugin service toggle error: {exc}")
-                    GLib.idle_add(_refresh)
                 threading.Thread(target=work, daemon=True).start()
 
             def _on_switch(_sw, state):
                 _psvc.set_service_enabled(manifest, bool(state))
                 _toggle_service(bool(state))
-                return True  # handled
+                return True
 
-            sw.connect("state-set", _on_switch)
+            sw_svc.connect("state-set", _on_switch)
 
             btn_start = Gtk.Button(label="Start server")
             btn_start.add_css_class("sayri-action-btn")
@@ -1870,8 +1930,6 @@ class SayriCajita(Gtk.Box):
             btn_stop.add_css_class("sayri-action-btn")
             btn_stop.connect("clicked", lambda _b: _toggle_service(False))
             box.append(btn_stop)
-
-        _refresh()
 
     def show_edit_plugin_view(self, plugin_data: dict) -> None:
         def _builder(box: Gtk.Box):

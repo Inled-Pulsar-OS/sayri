@@ -730,9 +730,37 @@ class SettingsWindowGTK3:
             s = Gtk.Label(label=subtitle)
             s.get_style_context().add_class("sayri-row-subtitle")
             s.set_halign(Gtk.Align.START)
-            s.set_wrap(True)
+            s.set_line_wrap(True)
             vbox.pack_start(s, False, False, 0)
             box.pack_start(vbox, True, True, 0)
+
+            # Plugin activation switch (persisted in config)
+            sw = Gtk.Switch()
+            sw.set_valign(Gtk.Align.CENTER)
+            pid = pl.get("id") or manifest.get("id", "")
+            is_enabled = self.cfg.get_bool("plugins_enabled", pid) if hasattr(self.cfg, "get_bool") else True
+            # Defaults to True if unset
+            try:
+                raw_en = self.cfg.get_string("plugins_enabled", pid)
+                is_active = raw_en.lower() not in ("0", "false", "no", "off") if raw_en else True
+            except Exception:
+                is_active = True
+            sw.set_active(is_active)
+
+            def _on_plugin_sw_toggled(widget, _gparam, p_id=pid, m=manifest):
+                active = widget.get_active()
+                try:
+                    self.cfg.set("plugins_enabled", p_id, str(active).lower())
+                    self.cfg.save()
+                    if m.get("type") == "ui" or "ui" in m:
+                        if active:
+                            self.cfg.set("ui", "default_ui", p_id)
+                            self.cfg.save()
+                except Exception as exc:
+                    print(f"[settings] error toggling plugin {p_id}: {exc}")
+
+            sw.connect("notify::active", _on_plugin_sw_toggled)
+            box.pack_end(sw, False, False, 0)
 
             if plugin_settings.settings_schema(manifest):
                 btn = Gtk.Button(label="Settings…")
@@ -740,11 +768,6 @@ class SettingsWindowGTK3:
                             self._open_plugin_settings(_d, _m))
                 btn.set_halign(Gtk.Align.END)
                 box.pack_end(btn, False, False, 0)
-            else:
-                none_lbl = Gtk.Label(label="no settings")
-                none_lbl.set_halign(Gtk.Align.END)
-                none_lbl.get_style_context().add_class("sayri-row-subtitle")
-                box.pack_end(none_lbl, False, False, 0)
 
             card.pack_start(box, False, False, 0)
 
@@ -778,7 +801,7 @@ class SettingsWindowGTK3:
 
         header = Gtk.Label(label=ui.get("sync_instructions") or "Plugin settings")
         header.set_halign(Gtk.Align.START)
-        header.set_wrap(True)
+        header.set_line_wrap(True)
         header.get_style_context().add_class("sayri-row-subtitle")
         box.pack_start(header, False, False, 0)
 
@@ -789,13 +812,13 @@ class SettingsWindowGTK3:
             if t == "note":
                 lbl = Gtk.Label(label=n.get("text", ""))
                 lbl.set_halign(Gtk.Align.START)
-                lbl.set_wrap(True)
+                lbl.set_line_wrap(True)
                 form.pack_start(lbl, False, False, 0)
                 continue
             if t in ("text", "sub"):
                 lbl = Gtk.Label(label=n.get("text", ""))
                 lbl.set_halign(Gtk.Align.START)
-                lbl.set_wrap(True)
+                lbl.set_line_wrap(True)
                 form.pack_start(lbl, False, False, 0)
                 continue
             if t == "spacer":
@@ -815,10 +838,11 @@ class SettingsWindowGTK3:
                 w.set_active(bool(cur if cur is not None else n.get("default", False)))
             else:  # select
                 w = Gtk.ComboBoxText()
-                opts_vals = [o.get("value", "") for o in n.get("options", [])]
+                opts_vals = [str(o.get("value", "")) for o in n.get("options", [])]
                 for o in n.get("options", []):
-                    w.append(o.get("value", ""), o.get("label") or o.get("value", ""))
-                w.set_active_id(selected if selected in opts_vals else (opts_vals[0] if opts_vals else ""))
+                    w.append(str(o.get("value", "")), o.get("label") or str(o.get("value", "")))
+                cur_str = str(cur)
+                w.set_active_id(cur_str if cur_str in opts_vals else (opts_vals[0] if opts_vals else ""))
             self._row(form, n.get("label") or n.get("id") or key, n.get("hint", ""), w)
             makers.append((w, n))
 
