@@ -10,8 +10,8 @@ _GUI_FLAGS = {
 }
 
 # UI ids routed directly to the GTK app (never through a plugin), so that
-# `sayri ui default` (with default_ui = "desktop") and the legacy orb both work.
-_GTK_UI_IDS = {"orb", "desktop", "sayri-desktop", "sayri-ui-desktop", "default", "", "legacy"}
+# `sayri ui default` (with default_ui = "desktop" or "sayri-ui-orb") and the legacy orb both work.
+_GTK_UI_IDS = {"orb", "desktop", "sayri-desktop", "sayri-ui-desktop", "sayri-ui-orb", "default", "", "legacy"}
 
 
 def _run_cli(args: list[str]) -> int:

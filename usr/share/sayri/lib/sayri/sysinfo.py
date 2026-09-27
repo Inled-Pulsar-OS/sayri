@@ -70,13 +70,18 @@ def default_state_dir() -> str:
 
 
 def shared_root_dir() -> str:
-    """System-wide Sayri root (/usr/share/sayri on Linux); on macOS/Windows it
-    resolves relative to the installed package so plugins/sounds are found in
-    the app bundle."""
-    if is_linux():
-        return "/usr/share/sayri"
+    """System-wide Sayri root (/usr/share/sayri on Linux); on macOS/Windows or
+    in a source checkout it resolves relative to the package so plugins/sounds
+    are found seamlessly."""
+    if os.environ.get("SAYRI_SHARED_DIR"):
+        return os.environ["SAYRI_SHARED_DIR"]
     lib = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # …/lib
-    return os.path.dirname(lib)
+    pkg_root = os.path.dirname(lib)  # …/usr/share/sayri
+    if os.path.isdir(os.path.join(pkg_root, "plugins")) or os.path.isdir(os.path.join(pkg_root, "web")):
+        return pkg_root
+    if is_linux() and os.path.isdir("/usr/share/sayri"):
+        return "/usr/share/sayri"
+    return pkg_root
 
 
 def default_data_dir() -> str:

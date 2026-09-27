@@ -1532,28 +1532,75 @@ def cmd_orb(pairs: dict, rest: list[str]) -> int:
 
 
 def _is_ui_plugin(data: dict) -> bool:
-    return isinstance(data.get("ui"), dict)
+    return data.get("type") == "ui" or isinstance(data.get("ui"), dict) or data.get("id", "").startswith("sayri-ui-")
+
+
+def _list_ui_plugins() -> list[dict]:
+    """Scan and list all installed UI plugins from user and system directories."""
+    from . import paths as _paths
+    roots = [
+        ("user", Path(_paths.plugins_dir())),
+        ("system", Path(_paths.shared_plugins_dir())),
+    ]
+    plugins: list[dict] = []
+    seen: set[str] = set()
+    current_default = _ui_resolve_default()
+
+    for scope, root in roots:
+        if not root.is_dir():
+            continue
+        for candidate in sorted(root.glob("*/manifest.json")):
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not _is_ui_plugin(data) or not data.get("entrypoint"):
+                continue
+            pid = data.get("id", candidate.parent.name)
+            if pid in seen:
+                continue
+            seen.add(pid)
+
+            # Check if running via pid file or process list
+            running = False
+            proc_pid = None
+            pid_file = Path(_paths.state_dir()) / f"{pid}.pid"
+            if pid_file.is_file():
+                try:
+                    p = int(pid_file.read_text().strip())
+                    if sysinfo.is_pid_alive(p):
+                        running = True
+                        proc_pid = p
+                except Exception:
+                    pass
+
+            plugins.append({
+                "id": pid,
+                "name": data.get("name", pid),
+                "description": data.get("description", ""),
+                "version": data.get("version", "1.0.0"),
+                "author": data.get("author", "Sayri Community"),
+                "entrypoint": candidate.parent / data["entrypoint"],
+                "path": candidate.parent,
+                "scope": scope,
+                "is_default": (pid == current_default or (current_default in ("desktop", "orb") and pid == "sayri-ui-orb")),
+                "running": running,
+                "pid": proc_pid,
+                "kind": data.get("ui", {}).get("kind", "desktop"),
+                "xui_renderer": data.get("ui", {}).get("xui_renderer", "default"),
+            })
+
+    return plugins
 
 
 def _ui_plugin_gateway(ui_id: str) -> Optional[Path]:
     """Find a UI-type plugin gateway by id (user config dir first, then system)."""
-    from . import paths as _paths
-    roots = [
-        Path(_paths.plugins_dir()),
-        Path(_paths.shared_plugins_dir()),
-    ]
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for candidate in root.glob("*/manifest.json"):
-            try:
-                data = json.loads(candidate.read_text(encoding="utf-8"))
-            except Exception:  # noqa: BLE001
-                continue
-            if not _is_ui_plugin(data) or not data.get("entrypoint"):
-                continue
-            if data.get("id") == ui_id or data.get("id") == f"sayri-{ui_id}" or data.get("name", "").lower() == ui_id.lower():
-                return candidate.parent / data["entrypoint"]
+    for pl in _list_ui_plugins():
+        pid = pl["id"]
+        pname = pl["name"].lower()
+        target = ui_id.lower()
+        if pid.lower() == target or pid.lower() == f"sayri-ui-{target}" or pid.lower() == f"sayri-{target}" or pname == target:
+            return pl["entrypoint"]
     return None
 
 
@@ -1569,30 +1616,175 @@ def _ui_resolve_default() -> str:
     return value
 
 
-def cmd_ui(pairs: dict, rest: list[str]) -> int:
-    """Launch/stop/query the desktop UI, exposed as a plugin.
+def _create_ui_plugin_template(ui_id: str, name: str = "") -> Path:
+    """Scaffold a new custom UI plugin in user's config directory."""
+    from . import paths as _paths
+    clean_id = ui_id.strip().lower()
+    if not clean_id.startswith("sayri-ui-"):
+        clean_id = f"sayri-ui-{clean_id}"
+    clean_name = name.strip() or clean_id.replace("sayri-ui-", "").replace("-", " ").title() + " UI"
 
-    ``sayri ui`` / ``sayri ui default``            start the default UI plugin
-    ``sayri ui <name> [start]``                    start that UI plugin
-    ``sayri ui <name> stop|status``                stop / query it
+    target_dir = Path(_paths.plugins_dir()) / clean_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "id": clean_id,
+        "name": clean_name,
+        "type": "ui",
+        "version": "1.0.0",
+        "description": f"Custom UI plugin {clean_name} for Sayri AI Assistant",
+        "author": os.environ.get("USER", "Community Developer"),
+        "entrypoint": "main.py",
+        "ui": {
+            "kind": "custom",
+            "xui_renderer": "custom"
+        }
+    }
+    (target_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    main_code = '''#!/usr/bin/env python3
+"""Custom UI Plugin for Sayri AI Assistant."""
+import sys
+import os
+import threading
+import time
+
+from sayri import ipc, config
+
+def main():
+    print(f"Starting custom Sayri UI ({os.path.basename(__file__)})...")
+    client = ipc.SayriClient()
+    try:
+        client.connect()
+        print("Connected to Sayri daemon IPC socket ✓")
+    except Exception as e:
+        print(f"Warning: Could not connect to daemon: {e}")
+
+    # Listen to assistant events
+    def _listen():
+        for event in client.events():
+            ev = event.get("event")
+            print(f"[UI Event] {ev}: {event}")
+
+    t = threading.Thread(target=_listen, daemon=True)
+    t.start()
+
+    print("Sayri UI is running. Press Ctrl+C to exit.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\\nExiting UI.")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+    main_py = target_dir / "main.py"
+    main_py.write_text(main_code, encoding="utf-8")
+    main_py.chmod(0o755)
+
+    return target_dir
+
+
+def cmd_ui(pairs: dict, rest: list[str]) -> int:
+    """Launch/stop/manage Sayri UI plugins and desktop frontends.
+
+    ``sayri ui list``                              list all installed UI plugins
+    ``sayri ui set <name>``                        set the default UI plugin
+    ``sayri ui [start] [<name>]``                  start UI plugin (default if omitted)
+    ``sayri ui stop [<name>]``                     stop UI plugin
+    ``sayri ui status [<name>]``                   check status of UI and daemon
+    ``sayri ui new <name> [--name "<title>"]``     scaffold a new custom UI plugin
     """
     action, rest = _pick_action(rest, {
-        "start": {"start", "launch", "abrir", "open", "iniciar", "arranca", "show", "mostrar"},
+        "list": {"list", "ls", "mostrar", "ver", "all", "disponibles"},
+        "set": {"set", "use", "default", "activar", "usar", "seleccionar", "elegir"},
+        "start": {"start", "launch", "abrir", "open", "iniciar", "arranca", "show"},
         "stop": {"stop", "parar", "cerrar", "quit", "quitar", "close"},
         "status": {"status", "estado", "check", "running"},
+        "new": {"new", "create", "crear", "nuevo", "template", "scaffold", "plantilla"},
     }, "start")
+
     ui_id = pairs.get("ui") or pairs.get("id") or (rest[0] if rest else "")
+
+    if action == "list":
+        plugins = _list_ui_plugins()
+        current_def = _ui_resolve_default()
+        print(f"\n🎨 Sayri UI Plugins ({len(plugins)} instalados):")
+        print("─" * 72)
+        for pl in plugins:
+            def_badge = " [PREDETERMINADA]" if pl["is_default"] else ""
+            status_badge = f"\033[1;32m● RUNNING (pid {pl['pid']})\033[0m" if pl["running"] else "\033[1;30m○ STOPPED\033[0m"
+            print(f"  • \033[1m{pl['id']}\033[0m ({pl['name']}){def_badge}")
+            print(f"    Estado: {status_badge}  |  Versión: {pl['version']}  |  Tipo: {pl['kind']}")
+            print(f"    Renderer XUI: {pl['xui_renderer']}  |  Ubicación: {pl['scope']}")
+            print(f"    Descripción: {pl['description']}")
+            print()
+        print(f"💡 Para cambiar la interfaz por defecto: sayri ui set <id>")
+        print(f"💡 Para iniciar una interfaz: sayri ui start <id>")
+        print(f"💡 Para crear tu propia UI: sayri ui new <nombre>\n")
+        return 0
+
+    if action == "set":
+        if not ui_id:
+            print("Uso: sayri ui set <id_de_interfaz>", file=sys.stderr)
+            return 1
+        gateway = _ui_plugin_gateway(ui_id)
+        if not gateway and ui_id not in ("orb", "desktop", "sayri-ui-orb", "default"):
+            print(f"Error: No se encontró ningún UI plugin con ID o nombre '{ui_id}'", file=sys.stderr)
+            return 1
+        from sayri import config as cfg
+        cfg.config.set_string("ui", "default_ui", ui_id)
+        cfg.config.save()
+        print(f"✓ UI predeterminada actualizada a: {ui_id}")
+        return 0
+
+    if action == "new":
+        if not ui_id:
+            print("Uso: sayri ui new <id_de_plugin> [--name \"Nombre\"]", file=sys.stderr)
+            return 1
+        title = pairs.get("name") or (rest[1] if len(rest) > 1 else "")
+        created_path = _create_ui_plugin_template(ui_id, title)
+        print(f"✓ Plantilla de UI Plugin creada con éxito en:\n  {created_path}")
+        print(f"  Edita {created_path}/main.py y ejecuta: sayri ui start {ui_id}")
+        return 0
+
     if not ui_id or ui_id in ("default", "predeterminada"):
         ui_id = _ui_resolve_default()
+
     if action == "status":
+        from .ipc import daemon_is_running
         print(f"default_ui = {ui_id}  daemon={'running' if daemon_is_running() else 'stopped'}")
         return 0
-    if ui_id in ("orb", "", "legacy"):
-        # legacy built-in GTK UI path (kept for backward compatibility)
-        if action == "stop":
+
+    if action == "stop":
+        from . import paths as _paths
+        pid_file = Path(_paths.state_dir()) / f"{ui_id}.pid"
+        stopped = False
+        if pid_file.is_file():
+            try:
+                sysinfo.terminate_pid(int(pid_file.read_text().strip()))
+                print(f"✓ Detenida UI {ui_id}")
+                stopped = True
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    pid_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        if ui_id in ("orb", "desktop", "sayri-ui-orb", "", "legacy"):
             sysinfo.kill_process_tree(pattern="python3 -m sayri --launch-ui")
-            print("orb ui: stop requested")
-            return 0
+            print("✓ Detenida UI Orb")
+            stopped = True
+        elif not stopped:
+            sysinfo.kill_process_tree(pattern=str(ui_id))
+            print(f"✓ Solicitud de detención enviada para {ui_id}")
+        return 0
+
+    # Start action
+    if ui_id in ("orb", "desktop", "sayri-ui-orb", "", "legacy"):
         _ensure_daemon()
         proc = subprocess.Popen(
             [sys.executable, "-m", "sayri", "--launch-ui"],
@@ -1600,27 +1792,17 @@ def cmd_ui(pairs: dict, rest: list[str]) -> int:
             stderr=subprocess.DEVNULL,
             **sysinfo.spawn_flags(),
         )
-        print(f"orb ui launching (pid {proc.pid}, daemon running)")
+        from . import paths as _paths
+        Path(_paths.state_dir()).mkdir(parents=True, exist_ok=True)
+        (Path(_paths.state_dir()) / "sayri-ui-orb.pid").write_text(str(proc.pid), encoding="utf-8")
+        print(f"✓ UI Orb iniciada (pid {proc.pid}, daemon en ejecución)")
         return 0
+
     gateway = _ui_plugin_gateway(ui_id)
     if not gateway or not gateway.is_file():
-        print(f"UI plugin not found: {ui_id}  (configured in ui.default_ui)", file=sys.stderr)
+        print(f"Error: UI plugin no encontrado: {ui_id} (configurado en ui.default_ui)", file=sys.stderr)
         return 1
-    if action == "stop":
-        from . import paths as _paths
-        pid_file = Path(_paths.state_dir()) / f"{ui_id}.pid"
-        if pid_file.is_file():
-            try:
-                sysinfo.terminate_pid(int(pid_file.read_text().strip()))
-                print(f"stopped ui {ui_id}")
-            except (OSError, ValueError):
-                print(f"ui {ui_id} was not running")
-            finally:
-                try:
-                    pid_file.unlink(missing_ok=True)
-                except Exception:  # noqa: BLE001
-                    pass
-        return 0
+
     _ensure_daemon()
     proc = subprocess.Popen(
         [sys.executable, str(gateway)],
@@ -1628,7 +1810,10 @@ def cmd_ui(pairs: dict, rest: list[str]) -> int:
         stderr=subprocess.DEVNULL,
         **sysinfo.spawn_flags(),
     )
-    print(f"ui plugin {ui_id} started (pid {proc.pid})")
+    from . import paths as _paths
+    Path(_paths.state_dir()).mkdir(parents=True, exist_ok=True)
+    (Path(_paths.state_dir()) / f"{ui_id}.pid").write_text(str(proc.pid), encoding="utf-8")
+    print(f"✓ UI plugin '{ui_id}' iniciado correctamente (pid {proc.pid})")
     return 0
 
 

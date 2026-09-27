@@ -50,6 +50,8 @@ package() {
         "$pkgdir/usr/bin/sayri-skills" \
         "$pkgdir/usr/bin/sayri-plugins"
 
+    find "$pkgdir/usr/share/sayri/plugins" -type f \( -name "*.py" -o -name "*.sh" \) -exec chmod 0755 {} + 2>/dev/null || true
+
     # Keep a copy of the README in /usr/share/doc.
     install -Dm0644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md" 2>/dev/null || true
 }

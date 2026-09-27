@@ -62,6 +62,7 @@ chmod 0755 %{buildroot}/usr/bin/sayri-indicator
 chmod 0755 %{buildroot}/usr/bin/sayri-settings
 chmod 0755 %{buildroot}/usr/bin/sayri-skills
 chmod 0755 %{buildroot}/usr/bin/sayri-plugins
+find %{buildroot}%{_datadir}/sayri/plugins -type f \( -name "*.py" -o -name "*.sh" \) -exec chmod 0755 {} + 2>/dev/null || :
 
 %files
 %doc README.md

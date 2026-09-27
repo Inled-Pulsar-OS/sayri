@@ -43,6 +43,9 @@ prepare_staging() {
     log "Staging tree in $STAGING"
     cp -a "$ROOT/usr" "$STAGING/usr"
     [ -d "$ROOT/etc" ] && cp -a "$ROOT/etc" "$STAGING/etc"
+    # Remove pycache
+    find "$STAGING" -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+    find "$STAGING" -name '*.pyc' -delete 2>/dev/null || true
     # Debian control (only meaningful for the .deb, harmless elsewhere).
     mkdir -p "$STAGING/DEBIAN"
     sed -E "s/^Version:.*/Version: $VERSION/" "$ROOT/DEBIAN/control" > "$STAGING/DEBIAN/control"
@@ -81,7 +84,8 @@ build_rpm() {
     local tar_sources=(README.md packaging usr)
     [ -d "$ROOT/etc" ] && tar_sources+=(etc)
     tar -C "$ROOT" --exclude='dist' --exclude='web/node_modules' --exclude='web/.expo' \
-        --exclude='.git' -cf "$rpmbuilddir/SOURCES/sayri-$VERSION.tar.gz" \
+        --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
+        -cf "$rpmbuilddir/SOURCES/sayri-$VERSION.tar.gz" \
         "${tar_sources[@]}"
     rpmbuild --define "_topdir $rpmbuilddir" \
              --define "sayri_version $VERSION" \
@@ -102,8 +106,8 @@ build_arch() {
     # dir; we ship a pre-built tree, so we install directly from it.
     cp "$HERE/PKGBUILD" "$archdir/PKGBUILD"
     cp "$ROOT/README.md" "$archdir/README.md"
-    tar -C "$ROOT" -czf "$archdir/usr.tar.gz" usr
-    [ -d "$ROOT/etc" ] && tar -C "$ROOT" -czf "$archdir/etc.tar.gz" etc
+    tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' -czf "$archdir/usr.tar.gz" usr
+    [ -d "$ROOT/etc" ] && tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' -czf "$archdir/etc.tar.gz" etc
     sed -i "s/^pkgver=.*/pkgver=$VERSION/" "$archdir/PKGBUILD"
     ( cd "$archdir" && makepkg -f --noconfirm --nodeps )
     cp "$archdir"/sayri-*.pkg.tar.* "$DIST/"

@@ -1,0 +1,13 @@
+{
+  "id": "sayri-ui-clippy",
+  "name": "Sayri Clippy Retro Companion",
+  "type": "ui",
+  "version": "1.0.0",
+  "description": "Interactive retro assistant pet that animates on desktop and renders Sayri responses & XUI skeletons in classic speech bubbles",
+  "author": "Inled Community",
+  "entrypoint": "main.py",
+  "ui": {
+    "kind": "character",
+    "xui_renderer": "speech-bubble"
+  }
+}

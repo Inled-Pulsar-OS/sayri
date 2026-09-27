@@ -1,0 +1,13 @@
+{
+  "id": "sayri-ui-orb",
+  "name": "Sayri Orb & Cajita (Default)",
+  "type": "ui",
+  "version": "1.0.0",
+  "description": "Default GTK4/WebKit reactive orb with Cajita assistant card, blur effects and full XUI skeleton support",
+  "author": "Inled Pulsar OS",
+  "entrypoint": "gateway.py",
+  "ui": {
+    "kind": "orb",
+    "xui_renderer": "cajita-gtk"
+  }
+}

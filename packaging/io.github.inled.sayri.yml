@@ -90,6 +90,7 @@ modules:
       - cp -a usr/share/. /app/share/
       - mkdir -p /app/share/applications /app/share/icons/hicolor
       - chmod 0755 /app/bin/sayri /app/bin/sayri-indicator /app/bin/sayri-settings /app/bin/sayri-skills /app/bin/sayri-plugins
+      - find /app/share/sayri/plugins -type f \( -name "*.py" -o -name "*.sh" \) -exec chmod 0755 {} + 2>/dev/null || true
       - cp usr/share/applications/sayri.desktop /app/share/applications/
       - cp -a usr/share/icons/hicolor/. /app/share/icons/hicolor/
     sources:
