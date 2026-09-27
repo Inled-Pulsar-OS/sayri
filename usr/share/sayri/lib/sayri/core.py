@@ -421,6 +421,9 @@ class SayriCore:
         if self.cfg.get_bool("tts", "enabled") and spoken and self.tts.ready:
             self._stop_session()
             self.set_state("speaking")
+            # UIs need the real start of the voice, not just "speaking" as a
+            # state, to know when the companion begins talking.
+            self.ui.on_speaking(True)
             self.tts.speak_async(
                 spoken,
                 on_level=lambda lvl: self._on_level(lvl),

@@ -140,6 +140,16 @@ function item(title, sub, actions, active) {
     actions ? el("div", { class: "actions" }, actions) : null);
 }
 
+// Extensions are not built into Sayri: the panel has no installer, so getting
+// a new plugin or gateway means picking it up from the Pulsar Store. This
+// hands the URL to the desktop to open, since the panel is a web view with no
+// browser of its own.
+const STORE_URL = "https://store-os.inled.es";
+
+function storeButton() {
+  return button("Pulsar Store ↗", () => postAction("open_url:" + STORE_URL));
+}
+
 function field(label, input, note) {
   return el("div", { class: "cajita-field" },
     el("label", { text: label }),
@@ -221,14 +231,34 @@ async function render() {
 
 // ── the live conversation ─────────────────────────────────────────
 
-function paintTranscript(log) {
-  log.innerHTML = "";
+// A command Sayri ran, with how it ended. Kept visually apart from speech:
+// it is machine output, not something the user said or Sayri said out loud.
+function toolRow(turn) {
+  const t = turn.tool || {};
+  const state = t.state || "ok";
+  const mark = state === "running" ? "⏳" : (state === "failed" ? "✗" : "✓");
+  const label = state === "running" ? "Running"
+    : (state === "failed" ? "Failed" + (t.exit_code ? " (code " + t.exit_code + ")" : "")
+                          : "Done");
+  return el("div", { class: "cajita-tool " + state },
+    el("div", { class: "tool-head" },
+      el("span", { class: "mark", text: mark }),
+      el("span", { class: "tool-label", text: label }),
+      el("span", { class: "grow" })),
+    el("code", { class: "tool-cmd", text: turn.text || "(no command)" }));
+}
+
+function paintTranscript(log) {  log.innerHTML = "";
   const turns = window.sayriBalloon ? window.sayriBalloon.transcript : [];
   if (!turns.length) {
     log.appendChild(hint("No messages yet. Ask Sayri something below."));
     return;
   }
   for (const turn of turns) {
+    if (turn.role === "tool") {
+      log.appendChild(toolRow(turn));
+      continue;
+    }
     log.appendChild(el("div", { class: "cajita-msg " + turn.role },
       el("span", { class: "who", text: turn.role === "user" ? "You" : "Sayri" }),
       turn.text));
@@ -486,6 +516,12 @@ const TAB_RENDERERS = {
         el("div", { class: "title", text: "Desktop interfaces" }),
         el("div", { class: "sub", text: "Start, stop or change which UI the launcher opens." }))));
 
+    box.appendChild(el("div", { class: "cajita-row" },
+      el("div", { class: "grow" },
+        el("div", { class: "title", text: "Add more companions and extensions" }),
+        el("div", { class: "note", text: "Get new interfaces, plugins and gateways from the Pulsar Store." })),
+      storeButton()));
+
     for (const u of uis) {
       const toggleUi = async (running) => {
         try {
@@ -550,7 +586,8 @@ const TAB_RENDERERS = {
     const list = Array.isArray(rows) ? rows : (rows && rows.instances) || [];
 
     box.appendChild(el("div", { class: "cajita-row" },
-      button("+ Add gateway", () => gatewayForm(box), "primary")));
+      button("+ Add gateway", () => gatewayForm(box), "primary"),
+      storeButton()));
 
     if (!list.length) {
       box.appendChild(hint("No chat gateway configured yet."));
@@ -975,22 +1012,47 @@ function watchAsset(asset, status, row) {
 
 // ── inline forms ──────────────────────────────────────────────────
 
+// Isolation levels, from the model's SandboxLevel enum, in the order a user
+// thinks about them: how much Sayri is allowed to touch, from nothing to
+// everything.
+const SANDBOX_LEVELS = [
+  ["LEVEL_0_NO_EXEC", "Level 0 — Pure chat", "No commands at all. It can only talk."],
+  ["LEVEL_1_READONLY", "Level 1 — Read-only", "Reads files in a bubblewrap sandbox. Writes nothing."],
+  ["LEVEL_2_ISOLATED_DEV", "Level 2 — Isolated workspace", "A private workspace, no system access, no display."],
+  ["LEVEL_3_HOST_USER", "Level 3 — Your user account", "Full terminal access as you. Can open apps and manage files."],
+  ["LEVEL_4_HOST_ROOT", "Level 4 — Administrator", "Everything above plus root, asking for your password."],
+];
+
 function agentForm(box, agent) {
   const a = agent || {};
   const name = el("input", { type: "text", value: a.name || "", placeholder: "Agent name" });
   const desc = el("input", { type: "text", value: a.description || "", placeholder: "What is it for?" });
   const prompt = el("textarea", { placeholder: "System prompt…" });
   prompt.value = a.system_prompt || "";
-  const skills = el("input", { type: "text", value: (a.allowed_skills || []).join(", "), placeholder: "comma, separated" });
-  const tools = el("input", { type: "text", value: (a.allowed_tools || []).join(", "), placeholder: "comma, separated" });
+  const skills = el("input", { type: "text", value: (a.allowed_skills || []).join(", "), placeholder: "Leave blank to allow every skill" });
+  const tools = el("input", { type: "text", value: (a.allowed_tools || []).join(", "), placeholder: "Leave blank to allow every tool" });
+  const level = (a.sandbox && a.sandbox.level) || "LEVEL_3_HOST_USER";
+  const levelInfo = el("div", { class: "note", text: sandboxNote(level) });
+  const levelSel = select(
+    SANDBOX_LEVELS.map(([value, label]) => ({ value, label })),
+    level,
+    (v) => { levelInfo.textContent = sandboxNote(v); }
+  );
+  const levelField = el("div", { class: "cajita-field" },
+    el("label", { text: "Isolation level" }),
+    levelSel,
+    levelInfo);
 
   const form = el("div", { class: "cajita-form" },
     el("h4", { text: agent ? "Edit agent" : "New agent" }),
     field("Name", name),
     field("Description", desc),
     field("System prompt", prompt),
-    field("Allowed skills", skills),
-    field("Allowed tools", tools),
+    levelField,
+    field("Allowed skills", skills,
+      "Blank means every installed skill is available. Name skills to limit it to those."),
+    field("Allowed tools", tools,
+      "Blank means it can use any tool, within its isolation level. Name tools to restrict it."),
     el("div", { class: "cajita-row" },
       button("Save", async () => {
         if (!name.value.trim()) { fail(box, "The agent needs a name."); return; }
@@ -1002,6 +1064,7 @@ function agentForm(box, agent) {
             system_prompt: prompt.value,
             allowed_skills: skills.value,
             allowed_tools: tools.value,
+            sandbox_level: levelSel.value,
           });
         } catch (err) {
           fail(box, err);
@@ -1012,6 +1075,11 @@ function agentForm(box, agent) {
       button("Cancel", () => render())));
   box.insertBefore(form, box.firstChild);
   name.focus();
+}
+
+function sandboxNote(level) {
+  const found = SANDBOX_LEVELS.find(([value]) => value === level);
+  return found ? found[2] : "";
 }
 
 function routineForm(box, routine) {
@@ -1177,6 +1245,10 @@ export function setOpen(next) {
     postAction("cajita_close");
     root.style.display = "none";
     stopStatusPolling();
+    // Closing Settings must not leave a bare companion on screen with no way to
+    // talk to it: hand the window back to the speech balloon, which is the
+    // compact view the gear was opened from.
+    window.sayriBalloon.showChatBox();
   }
 }
 

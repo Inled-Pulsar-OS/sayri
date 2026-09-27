@@ -82,6 +82,11 @@ except Exception:
         sys.exit(1)
 
 try:
+    from gi.repository import Gio
+except Exception:  # Gio is present in practice; degrade gracefully if not.
+    Gio = None
+
+try:
     gi.require_version("Gtk4LayerShell", "1.0")
     from gi.repository import Gtk4LayerShell as LayerShell
     _LAYER_OK = True
@@ -470,6 +475,9 @@ class RetroCompanionWindow:
         elif action_id == "cajita_close":
             self._resize_window(440, 380)
             return
+        elif action_id.startswith("open_url:"):
+            self._open_url(action_id.split(":", 1)[1])
+            return
         elif action_id.startswith("set_character:"):
             self.set_character(action_id.split(":", 1)[1])
             return
@@ -541,6 +549,25 @@ class RetroCompanionWindow:
                 self._reply_call(req_id, False, error=str(exc))
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def _open_url(self, url: str) -> None:
+        """Open a web page in the user's browser.
+
+        The panel has no browser of its own, so anything that needs the web
+        (the Pulsar Store, documentation) is handed to the desktop. Only
+        http(s) is accepted: the action comes from page content, and a
+        ``file:`` or custom-scheme URL would be a way out of that.
+        """
+        url = str(url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            return
+        try:
+            if Gio is not None:
+                Gio.AppInfo.launch_default_for_uri(url, None)
+            else:
+                subprocess.Popen(["xdg-open", url], **sysinfo.spawn_flags())
+        except Exception as exc:
+            print(f"[retro-ui] could not open {url}: {exc}", file=sys.stderr)
 
     def _reply_call(self, req_id: str, ok: bool, data: Any = None, error: str = "") -> None:
         payload = {"req_id": req_id, "ok": bool(ok), "data": data, "error": error}

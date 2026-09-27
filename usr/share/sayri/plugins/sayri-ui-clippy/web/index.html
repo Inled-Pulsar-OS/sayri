@@ -463,6 +463,45 @@
       background: #f2fbe8;
       border-color: #c3e0a0;
     }
+    /* A command Sayri ran: machine output, so it reads as its own kind of
+       thing rather than as something that was said. */
+    .cajita-tool {
+      margin-bottom: 6px;
+      padding: 5px 7px;
+      font-size: 11px;
+      background: #f4f4f6;
+      border: 1px solid #d5d5dd;
+      border-left: 3px solid #9a9aa5;
+    }
+    .cajita-tool.running { border-left-color: #c98a1b; }
+    .cajita-tool.failed {
+      background: #fdf0f0;
+      border-color: #f0c4c4;
+      border-left-color: #c0392b;
+    }
+    .cajita-tool .tool-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 3px;
+    }
+    .cajita-tool .tool-label {
+      font-weight: bold;
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #666666;
+    }
+    .cajita-tool .tool-cmd {
+      display: block;
+      font-family: monospace;
+      font-size: 10.5px;
+      background: #ffffff;
+      border: 1px solid #e2e2e8;
+      padding: 3px 5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #24242c;
+    }
     .cajita-msg .who {
       font-weight: bold;
       font-size: 10px;
@@ -538,7 +577,7 @@
       <div id="balloon-text" class="balloon-text"></div>
       <div id="xui-area" class="xui-container"></div>
       <div class="input-row">
-        <button id="settings-btn" title="Open the Sayri Cajita">⚙️</button>
+        <button id="settings-btn" title="Open Sayri Settings">⚙️</button>
         <button id="mic-btn" title="Listen by voice (push to talk)">🎙️</button>
         <input type="text" id="user-input" placeholder="Ask Sayri something..." autocomplete="off">
         <button id="send-btn" title="Send message">➤</button>
@@ -546,13 +585,13 @@
     </div>
     <div id="agent-anchor"></div>
 
-    <!-- Cajita: the full assistant card, docked where the balloon lives -->
+    <!-- Settings: the full assistant card, docked where the balloon lives -->
     <div id="cajita">
       <div class="cajita-titlebar">
-        <span id="cajita-title">📦 Sayri Cajita</span>
+        <span id="cajita-title">⚙️ Settings</span>
         <span class="spacer"></span>
         <button id="cajita-refresh" title="Reload this tab">↻</button>
-        <button id="cajita-close" title="Close the Cajita">✕</button>
+        <button id="cajita-close" title="Close Settings">✕</button>
       </div>
       <div class="cajita-tabs" id="cajita-tabs"></div>
       <div class="cajita-body" id="cajita-body"></div>
@@ -625,6 +664,7 @@
     import * as cajita from "./cajita.js";
 
     let currentAgentInstance = null;
+    let agentLoadToken = 0;
     let currentAgentName = "Clippy";
     let isListening = false;
     let hideBalloonTimeout = null;
@@ -676,8 +716,49 @@
       return !!sticky && (Date.now() - lastAt) < sticky;
     }
 
-    function playAny(names) {
-      if (!currentAgentInstance || !soundEffects) return false;
+    // The compact chat box: the companion plus its text field, which is what
+    // the gear is opened from and what closing Settings hands back. Unlike a
+    // balloon message this stays up until it is dismissed, because it is the
+    // view you talk to Sayri in, not a notification.
+    window.showChatBox = function () {
+      if (hideBalloonTimeout) clearTimeout(hideBalloonTimeout);
+      if (!balloonText.textContent.trim()) {
+        balloonText.textContent = "Ask me anything...";
+      }
+      headerTitle.textContent = currentAgentName || "Sayri";
+      balloon.style.display = "flex";
+      if (userInput) userInput.focus();
+    };
+
+    window.hideChatBox = function () {
+      balloon.style.display = "none";
+    };
+
+    window.toggleChatBox = function () {
+      if (balloon.style.display === "none") window.showChatBox();
+      else window.hideChatBox();
+    };
+
+    // ── companion animation ──────────────────────────────────────────────
+    // Every companion ships its own animation set, so no single name works
+    // everywhere. Each entry below is an ordered list of fallbacks: the first
+    // one this companion actually has wins. RestPose and GetAttention exist in
+    // all nine; the thinking and speaking sets differ between the MS and the
+    // Mac collections, hence the longer lists.
+    const ANIM = {
+      idle:      ["RestPose", "Blink"],
+      listening: ["GetAttention", "LookUp"],
+      thinking:  ["Thinking", "Process", "GetAttention"],
+      speaking:  ["Explain", "Writing", "Write", "Wave"],
+      confused:  ["Alert", "LookDown", "RestPose"],
+    };
+    let animState = "";
+    let animTimer = null;
+
+    // Play the first animation this companion knows. `play` returns false for a
+    // name it does not have, which is what makes the fallback lists work.
+    function playAnim(names) {
+      if (!currentAgentInstance) return false;
       for (const n of names) {
         try {
           if (currentAgentInstance.play(n)) return true;
@@ -686,18 +767,115 @@
       return false;
     }
 
-    async function loadAgent(agentName) {
+    // Companion animations carry their own sound frame by frame, so switching
+    // sound effects off means muting the companion's audio, not skipping the
+    // animation: gating the animation would freeze the character whenever the
+    // user turned the sounds off.
+    function applySoundEnabled(on) {
+      soundEffects = !!on;
+      const animator = currentAgentInstance && currentAgentInstance._animator;
+      const sounds = animator && animator._sounds;
+      if (!sounds) return;
+      for (const key in sounds) {
+        const audio = sounds[key];
+        if (!audio) continue;
+        if (soundEffects) {
+          audio.muted = false;
+        } else {
+          audio.muted = true;
+          try { audio.pause(); } catch (e) {}
+        }
+      }
+    }
+
+    // WebKit refuses to start audio until the user has interacted with the
+    // page, and the companion silently swallows that rejection, so the sounds
+    // are simply inaudible until then. Nudging each clip once, muted, on the
+    // first gesture is what unlocks playback for the rest of the session.
+    let soundsUnlocked = false;
+    function unlockSounds() {
+      const animator = currentAgentInstance && currentAgentInstance._animator;
+      const sounds = animator && animator._sounds;
+      if (!sounds) return;
+      for (const key in sounds) {
+        const audio = sounds[key];
+        if (!audio) continue;
+        const wasMuted = audio.muted;
+        audio.muted = true;
+        let started = null;
+        try { started = audio.play(); } catch (e) { started = null; }
+        const settle = () => {
+          try { audio.pause(); audio.currentTime = 0; } catch (e) {}
+          audio.muted = wasMuted;
+        };
+        if (started && typeof started.then === "function") started.then(settle, settle);
+        else settle();
+      }
+    }
+
+    // Called once, on the first interaction of any kind.
+    function armSoundUnlock() {
+      if (soundsUnlocked) return;
+      soundsUnlocked = true;
+      unlockSounds();
+      window.removeEventListener("pointerdown", armSoundUnlock, true);
+      window.removeEventListener("keydown", armSoundUnlock, true);
+    }
+
+    // Animate for a state until something else takes over. Companion
+    // animations are short one-shots that time out on their own, so a state
+    // that lasts (thinking, speaking) has to be topped up; the name is only
+    // re-resolved when the state changes, so streaming a reply does not
+    // restart the animation on every word.
+    function setAnimState(next) {
+      const state = ANIM[next] ? next : "idle";
+      if (state === animState) return;
+      animState = state;
+      if (animTimer) { clearInterval(animTimer); animTimer = null; }
+      // `play` queues, and a queued animation still runs after the state moved
+      // on. Without this the companion keeps working through a backlog of
+      // thinking animations long after the reply is finished, which reads as
+      // "still busy" when it is actually idle.
       if (currentAgentInstance) {
-        try {
-          currentAgentInstance.dispose();
-        } catch (e) {}
+        try { currentAgentInstance.stop(); } catch (e) {}
+      }
+      const step = () => playAnim(ANIM[state]);
+      step();
+      if (state === "thinking" || state === "speaking" || state === "listening") {
+        animTimer = setInterval(step, 3000);
+      }
+    }
+
+    async function loadAgent(agentName) {
+      // Loading a companion is async, and it is started from more than one
+      // place (this page picks a default, the host injects the saved
+      // character, the user switches character). Two overlapping calls would
+      // both pass the dispose below against the same stale instance, so the
+      // loser of the race would stay in the DOM and you would see two copies
+      // of the character stacked on each other. A token decides which load
+      // wins; the others throw their instance away.
+      const token = ++agentLoadToken;
+      const previous = currentAgentInstance;
+      currentAgentInstance = null;
+      if (previous) {
+        try { previous.dispose(); } catch (e) {}
       }
       currentAgentName = agentName;
       const agentKey = Object.keys(allAgents).find(k => k.toLowerCase() === agentName.toLowerCase()) || "Clippy";
       const agentDef = allAgents[agentKey] || allAgents.Clippy;
 
-      currentAgentInstance = await initAgent(agentDef);
+      const instance = await initAgent(agentDef);
+      if (token !== agentLoadToken) {
+        // A newer request already won; this one must not stay on screen.
+        try { instance.dispose(); } catch (e) {}
+        return;
+      }
+      currentAgentInstance = instance;
       currentAgentInstance.show(true);
+      // A fresh companion loads its own audio, so the sound setting has to be
+      // pushed onto it again rather than only being applied once at startup.
+      applySoundEnabled(soundEffects);
+      unlockSounds();
 
       // Explicitly position the agent inside the visible canvas
       const agEl = currentAgentInstance._el;
@@ -707,6 +885,12 @@
         agEl.style.top = Math.max(20, (window.innerHeight - 130)) + "px";
         agEl.style.display = "block";
         agEl.style.zIndex = "10005";
+        agEl.title = "Click to open the chat box";
+        // Clicking the companion brings up the chat box, clicking again puts
+        // it away. This element is also the drag handle, but a `click` only
+        // fires when the pointer did not really move, so it does not fight
+        // dragging the companion around.
+        agEl.addEventListener("click", () => window.toggleChatBox());
       }
 
       // Hide clippyjs internal basic balloon if present
@@ -825,25 +1009,32 @@
           const st = event.state;
           if (st === "listening" || st === "activated") {
             updateMicUI(true);
-            playAny(["Hearing_1", "Listening", "LookDown"]);
+            setAnimState("listening");
             if (!hasFreshPayload()) {
               window._doShowBalloon("Listening to you... Speak now.", "🎙️ Microphone", "mic");
             }
           } else if (st === "thinking") {
             updateMicUI(false);
-            playAny(["Thinking", "Searching"]);
+            setAnimState("thinking");
             if (!hasFreshPayload()) {
               window._doShowBalloon("Thinking about the answer...", "🤔 Sayri", "status");
             }
           } else if (st === "speaking") {
             updateMicUI(false);
-            playAny(["Explain", "Wave"]);
+            setAnimState("speaking");
           } else if (st === "idle") {
             updateMicUI(false);
-            playAny(["Idle"]);
+            setAnimState("idle");
           }
           break;
         }
+
+        // `speaking` is the real voice activity, driven by the speech
+        // synthesiser rather than by the reply text, so it is what decides
+        // "the companion is talking", even for a reply that is not narrated.
+        case "speaking":
+          setAnimState(event.active ? "speaking" : "idle");
+          break;
 
         case "mic":
           updateMicUI(!!event.active);
@@ -865,6 +1056,9 @@
 
         case "user":
           streamBuf = "";
+          // The moment the request is out, the wait starts: the companion
+          // thinks until the voice kicks in (the `speaking` event).
+          setAnimState("thinking");
           if (event.text) {
             window._doShowBalloon(event.text, "💬 You", "user");
             pushTranscript("user", event.text);
@@ -877,7 +1071,8 @@
           streamBuf += piece;
           window._doShowBalloon(streamBuf, "💬 Sayri", "reply");
           pushTranscript("assistant", streamBuf);
-          playAny(["Explain"]);
+          // Deliberately no animation here: deltas arrive per token, and the
+          // talking animation belongs to the `speaking` event instead.
           break;
         }
 
@@ -888,8 +1083,10 @@
             window._doShowBalloon(text, "💬 Sayri", "reply");
             pushTranscript("assistant", text);
             closeTranscriptTurn();
-            playAny(["Explain", "Wave"]);
           }
+          // The pose is left to the voice: `speaking` arrives next, and the
+          // settled state comes from `speaking: false` or `state: idle`. Going
+          // idle here would flicker between the reply and the first syllable.
           break;
         }
 
@@ -898,20 +1095,36 @@
           streamBuf = "";
           updateMicUI(false);
           window._doShowBalloon(msg, "❌ Sayri Error", "error");
-          playAny(["Confused", "LookDown", "Idle"]);
+          setAnimState("confused");
           break;
         }
 
         case "tool_start":
           streamBuf = "";
+          // Running a command is work in progress, so the companion says so.
+          setAnimState("thinking");
+          pushTranscript("tool", String(event.command || "").trim(),
+            { state: "running" });
           window._doShowBalloon("Running: " + (event.command || ""), "⚙️ Sayri", "status");
           break;
 
-        case "tool_finish":
-          if (event.exit_code && !hasFreshPayload()) {
-            window._doShowBalloon("Command finished (code " + event.exit_code + ")", "⚙️ Sayri", "status");
+        case "tool_finish": {
+          // Close the command that is still open rather than starting a new
+          // turn, so one command reads as one entry with one result.
+          const code = event.exit_code;
+          for (let i = transcript.length - 1; i >= 0; i--) {
+            const t = transcript[i];
+            if (t.role === "tool" && t.tool && t.tool.state === "running") {
+              t.tool.state = (!code) ? "ok" : "failed";
+              t.tool.exit_code = code;
+              break;
+            }
+          }
+          if (code && !hasFreshPayload()) {
+            window._doShowBalloon("Command finished (code " + code + ")", "⚙️ Sayri", "status");
           }
           break;
+        }
 
         case "hint":
           if (event.text && !hasFreshPayload()) {
@@ -961,7 +1174,7 @@
       streamBuf = "";
       window._doShowBalloon(txt, "💬 You", "user");
       pushTranscript("user", txt);
-      playAny(["Thinking", "Searching"]);
+      setAnimState("thinking");
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriPrompt) {
         window.webkit.messageHandlers.sayriPrompt.postMessage(txt);
       }
@@ -970,11 +1183,11 @@
     if (settingsBtn) {
       settingsBtn.onclick = (e) => {
         e.stopPropagation();
-        // The Cajita panel carries the whole settings surface now, so the
+        // The Settings panel carries the whole settings surface now, so the
         // gear opens it instead of spawning a separate app window.
         window.toggleCajita();
       };
-      settingsBtn.title = "Open the Sayri Cajita";
+      settingsBtn.title = "Open Sayri Settings";
     }
     if (micBtn) {
       micBtn.onclick = (e) => {
@@ -1008,11 +1221,16 @@
       resetTranscript() { transcript = []; },
       show(text, header, kind) { window._doShowBalloon(text, header, kind); },
       hide() { balloon.style.display = "none"; },
+      // The panel uses this when it hands the window back to the companion, so
+      // closing Settings does not leave a bare avatar with nothing to click.
+      showChatBox() { window.showChatBox(); },
     };
     // The plugin host injects the companion's own settings once the page has
     // loaded: the sound toggle drives playback here, the rest feed the panel.
     window.applyPluginInfo = (info) => {
-      if (info && typeof info.sound_effects === "boolean") soundEffects = info.sound_effects;
+      if (info && typeof info.sound_effects === "boolean") {
+        applySoundEnabled(info.sound_effects);
+      }
       if (info && info.character) currentAgentName = info.character;
       cajita.applyInfo(info);
     };
@@ -1020,7 +1238,13 @@
     cajita.init();
 
     // ── the live conversation, mirrored into the Cajita Chat tab ────────
-    function pushTranscript(role, text) {
+    function pushTranscript(role, text, meta) {
+      if (role === "tool") {
+        // A command is a turn of its own so the chat can show what Sayri ran
+        // and how it ended, instead of only a balloon that scrolls away.
+        transcript.push({ role: "tool", text: text || "", tool: meta || {} });
+        return;
+      }
       if (!text) return;
       if (role === "user") {
         transcript.push({ role: "user", text: text });
@@ -1046,6 +1270,10 @@
     } else {
       loadAgent("Clippy");
     }
+
+    // The first click or keypress anywhere unlocks the companion's audio.
+    window.addEventListener("pointerdown", armSoundUnlock, true);
+    window.addEventListener("keydown", armSoundUnlock, true);
   </script>
 </body>
 </html>
