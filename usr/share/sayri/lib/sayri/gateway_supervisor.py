@@ -136,10 +136,21 @@ class GatewaySupervisor:
             except Exception as e:
                 print(f"[Supervisor] Error loading instances: {e}", file=sys.stderr)
 
+        installed_gateways = {g["id"]: g for g in self.list_installed_gateways()}
+
+        # Purge any instances that are not gateways (e.g. UIs or tools)
+        cleaned = [
+            inst for inst in instances
+            if inst.get("plugin_id", inst.get("id")) in installed_gateways
+            or "gateway" in str(inst.get("plugin_id", inst.get("id")))
+        ]
+        if len(cleaned) != len(instances):
+            instances = cleaned
+            self._save_instances_to_disk(instances)
+
         # Bootstrap initial instance if file is empty
         if not instances:
-            installed = self.list_installed_plugins()
-            for p in installed:
+            for p in self.list_installed_gateways():
                 default_sec = p["required_secrets"][0] if p["required_secrets"] else ""
                 inst = {
                     "id": p["id"],
@@ -155,7 +166,8 @@ class GatewaySupervisor:
                     "created_at": time.time(),
                 }
                 instances.append(inst)
-            self._save_instances_to_disk(instances)
+            if instances:
+                self._save_instances_to_disk(instances)
 
         return instances
 

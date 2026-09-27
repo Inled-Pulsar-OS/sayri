@@ -1605,8 +1605,8 @@ class SayriCajita(Gtk.Box):
 
         from sayri.gateway_supervisor import gateway_supervisor
 
-        tool_plugins = gateway_supervisor.list_installed_tools()
-        if not tool_plugins:
+        all_plugins = [p for p in gateway_supervisor.list_installed_plugins() if p.get("type") != "gateway"]
+        if not all_plugins:
             empty_lbl = Gtk.Label(label="No plugins installed. Visit the Pulsar Store (store-os.inled.es) to install developer tools, web search, or MCP servers.")
             empty_lbl.set_halign(Gtk.Align.START)
             empty_lbl.set_wrap(True)
@@ -1614,7 +1614,10 @@ class SayriCajita(Gtk.Box):
             self.plugins_box.append(empty_lbl)
             return
 
-        for pl in tool_plugins:
+        cfg = getattr(self.app, "cfg", None)
+        cur_default_ui = cfg.get_string("ui", "default_ui") if cfg else "sayri-ui-orb"
+
+        for pl in all_plugins:
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             card.add_css_class("sayri-card-item")
 
@@ -1627,38 +1630,51 @@ class SayriCajita(Gtk.Box):
             t.set_hexpand(True)
             header_row.append(t)
 
-            # Security level tag
-            min_lvl = pl.get("min_sandbox_level", "LEVEL_1_READONLY")
-            allow_l0 = pl.get("allow_in_level_0", False)
+            pid = pl.get("id", "")
+            is_ui = pl.get("type") == "ui" or pid.startswith("sayri-ui-")
 
-            sec_badge = Gtk.Label()
-            if allow_l0 or "NO_EXEC" in min_lvl:
-                sec_badge.set_markup("<span foreground='#22c55e' size='8500' weight='600'>🟢 Safe for L0/L1</span>")
-            elif "READONLY" in min_lvl or "ISOLATED" in min_lvl:
-                sec_badge.set_markup("<span foreground='#38bdf8' size='8500' weight='600'>🛡️ Requires Sandbox L1+</span>")
+            # Tag / Security level badge
+            badge = Gtk.Label()
+            if is_ui:
+                is_current_def = (cur_default_ui == pid) or (cur_default_ui.endswith(pid) or pid.endswith(cur_default_ui))
+                if is_current_def:
+                    badge.set_markup("<span foreground='#38bdf8' size='8500' weight='600'>★ Default UI</span>")
+                else:
+                    badge.set_markup("<span foreground='#a855f7' size='8500' weight='600'>🎭 UI Plugin</span>")
             else:
-                sec_badge.set_markup("<span foreground='#f59e0b' size='8500' weight='600'>⚠️ Requires Host L3</span>")
-            header_row.append(sec_badge)
+                min_lvl = pl.get("min_sandbox_level", "LEVEL_1_READONLY")
+                allow_l0 = pl.get("allow_in_level_0", False)
+                if allow_l0 or "NO_EXEC" in min_lvl:
+                    badge.set_markup("<span foreground='#22c55e' size='8500' weight='600'>🟢 Safe for L0/L1</span>")
+                elif "READONLY" in min_lvl or "ISOLATED" in min_lvl:
+                    badge.set_markup("<span foreground='#38bdf8' size='8500' weight='600'>🛡️ Requires Sandbox L1+</span>")
+                else:
+                    badge.set_markup("<span foreground='#f59e0b' size='8500' weight='600'>⚠️ Requires Host L3</span>")
+            header_row.append(badge)
 
             # Plugin Enable / Disable Switch
-            pid = pl.get("id", "")
-            cfg = getattr(self.app, "cfg", None)
-            is_active = cfg.is_plugin_enabled(pid) if cfg and hasattr(cfg, "is_plugin_enabled") else True
+            if is_ui:
+                is_active = (cur_default_ui == pid) or (cur_default_ui.endswith(pid) or pid.endswith(cur_default_ui))
+            else:
+                is_active = cfg.is_plugin_enabled(pid) if cfg and hasattr(cfg, "is_plugin_enabled") else True
 
             sw = Gtk.Switch()
             sw.set_valign(Gtk.Align.CENTER)
             sw.set_active(is_active)
 
-            def _on_sw_toggled(widget, _gparam, p_id=pid, p_meta=pl):
+            def _on_sw_toggled(widget, _gparam, p_id=pid, p_meta=pl, p_is_ui=is_ui):
                 active = widget.get_active()
                 if cfg and hasattr(cfg, "set_plugin_enabled"):
                     cfg.set_plugin_enabled(p_id, active)
-                # If UI plugin, set as default UI or toggle
-                if p_meta.get("type") == "ui" or "ui" in p_meta or p_id.startswith("sayri-ui-"):
-                    if active and cfg:
-                        cfg.set_string("ui", "default_ui", p_id)
-                # If service plugin, start or stop
-                if p_meta.get("service"):
+                if p_is_ui:
+                    if active:
+                        if cfg:
+                            cfg.set_string("ui", "default_ui", p_id)
+                        threading.Thread(target=lambda: os.system(f"sayri ui start {p_id} &"), daemon=True).start()
+                    else:
+                        threading.Thread(target=lambda: os.system(f"sayri ui stop {p_id} &"), daemon=True).start()
+                    GLib.timeout_add(300, lambda: (self._populate_plugins_tools(), False))
+                elif p_meta.get("service"):
                     try:
                         from sayri import plugin_service
                         if active:
