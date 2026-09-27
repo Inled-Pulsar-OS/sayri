@@ -116,6 +116,14 @@ class RetroCompanionWindow:
 
             self.webview = WebKit.WebView()
             self.win.add(self.webview)
+
+            import cairo
+            def _on_draw(w, cr):
+                cr.set_source_rgba(0, 0, 0, 0)
+                cr.set_operator(cairo.OPERATOR_SOURCE)
+                cr.paint()
+                return False
+            self.win.connect("draw", _on_draw)
         else:
             self.win = Gtk.Window()
             self.win.set_title("Sayri Companion")
@@ -167,12 +175,8 @@ class RetroCompanionWindow:
         ucm.connect("script-message-received::sayriAction", self._on_js_action)
 
         def _on_load_changed(webview, load_event):
-            if _GTK_VERSION == 3:
-                if load_event == WebKit.LoadEvent.FINISHED:
-                    self._dispatch_js(f"window.switchAgent({json.dumps(self.current_char)})")
-            else:
-                if load_event == WebKit.LoadEvent.FINISHED:
-                    self._dispatch_js(f"window.switchAgent({json.dumps(self.current_char)})")
+            if load_event == WebKit.LoadEvent.FINISHED:
+                self._dispatch_js(f"window.switchAgent({json.dumps(self.current_char)})")
         self.webview.connect("load-changed", _on_load_changed)
 
         # Right click gesture / click
@@ -227,12 +231,13 @@ class RetroCompanionWindow:
     def _on_js_prompt(self, _ucm, msg) -> None:
         """User submitted text in the speech balloon."""
         try:
-            if _GTK_VERSION == 4:
-                text = msg.get_js_value().to_string()
-            else:
-                text = msg.get_value().to_string()
+            val = msg.get_js_value()
+            text = val.to_string()
         except Exception:
-            text = str(msg)
+            try:
+                text = str(msg.get_value())
+            except Exception:
+                text = str(msg)
 
         if not text:
             return
@@ -249,12 +254,13 @@ class RetroCompanionWindow:
     def _on_js_action(self, _ucm, msg) -> None:
         """User clicked an XUI action button or UI control."""
         try:
-            if _GTK_VERSION == 4:
-                action_id = msg.get_js_value().to_string()
-            else:
-                action_id = msg.get_value().to_string()
+            val = msg.get_js_value()
+            action_id = val.to_string()
         except Exception:
-            action_id = str(msg)
+            try:
+                action_id = str(msg.get_value())
+            except Exception:
+                action_id = str(msg)
 
         if action_id == "open_settings":
             subprocess.Popen(["sayri-settings"], **sysinfo.spawn_flags())

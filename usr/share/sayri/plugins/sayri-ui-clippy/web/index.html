@@ -185,6 +185,28 @@
     <div id="agent-anchor"></div>
   </div>
 
+  <script>
+    window.currentAgentName = "Clippy";
+    window.pendingAgent = null;
+    window.switchAgent = function(name) {
+      if (window._doSwitchAgent) {
+        window._doSwitchAgent(name);
+      } else {
+        window.pendingAgent = name;
+      }
+    };
+    window.showBalloon = function(text, header = "💡 Sayri Assistant") {
+      if (window._doShowBalloon) {
+        window._doShowBalloon(text, header);
+      }
+    };
+    window.onDaemonEvent = function(event) {
+      if (window._doOnDaemonEvent) {
+        window._doOnDaemonEvent(event);
+      }
+    };
+  </script>
+
   <script type="module">
     import { initAgent } from "./dist/index.mjs";
     import * as allAgents from "./dist/agents/index.mjs";
@@ -199,6 +221,13 @@
     const xuiArea = document.getElementById("xui-area");
     const userInput = document.getElementById("user-input");
     const sendBtn = document.getElementById("send-btn");
+
+    window._doShowBalloon = function(text, header = "💡 Sayri Assistant") {
+      headerTitle.textContent = header;
+      balloonText.textContent = text;
+      balloon.style.display = "flex";
+      if (hideBalloonTimeout) clearTimeout(hideBalloonTimeout);
+    };
 
     async function loadAgent(agentName) {
       if (currentAgentInstance) {
@@ -233,18 +262,11 @@
         if (currentAgentInstance) currentAgentInstance.play("Wave");
       }, 500);
 
-      showBalloon(`¡Hola! Soy tu asistente Sayri (${agentName}). ¿En qué puedo ayudarte?`);
+      window._doShowBalloon(`¡Hola! Soy tu asistente Sayri (${agentName}). ¿En qué puedo ayudarte?`);
     }
 
-    window.switchAgent = function(name) {
+    window._doSwitchAgent = function(name) {
       loadAgent(name);
-    };
-
-    window.showBalloon = function(text, header = "💡 Sayri Assistant") {
-      headerTitle.textContent = header;
-      balloonText.textContent = text;
-      balloon.style.display = "flex";
-      if (hideBalloonTimeout) clearTimeout(hideBalloonTimeout);
     };
 
     window.hideBalloon = function() {
@@ -318,34 +340,35 @@
       balloon.style.display = "flex";
     };
 
-    window.onDaemonEvent = function(event) {
+    window._doOnDaemonEvent = function(event) {
       const ev = event.event;
       if (ev === "state") {
         const st = event.state;
         if (st === "listening") {
           if (currentAgentInstance) currentAgentInstance.play("Hearing_1") || currentAgentInstance.play("Listening") || currentAgentInstance.play("LookDown");
-          showBalloon("Escuchando tu voz...", "🎙️ Micrófono");
+          window._doShowBalloon("Escuchando tu voz...", "🎙️ Micrófono");
         } else if (st === "thinking") {
           if (currentAgentInstance) currentAgentInstance.play("Thinking") || currentAgentInstance.play("Searching");
-          showBalloon("Pensando la respuesta...", "🤔 Sayri");
+          window._doShowBalloon("Pensando la respuesta...", "🤔 Sayri");
         } else if (st === "speaking") {
           if (currentAgentInstance) currentAgentInstance.play("Explain") || currentAgentInstance.play("Wave");
         }
       } else if (ev === "utterance") {
-        showBalloon(event.text || "", "🎙️ Transcripción");
+        window._doShowBalloon(event.text || "", "🎙️ Transcripción");
       } else if (ev === "assistant_delta" || ev === "assistant_done") {
-        showBalloon(event.text || "", "💬 Sayri");
+        window._doShowBalloon(event.text || "", "💬 Sayri");
         if (currentAgentInstance) currentAgentInstance.play("Explain");
       } else if (ev === "render_xui") {
         renderXuiSkeleton(event.screen);
       }
     };
+    window.onDaemonEvent = window._doOnDaemonEvent;
 
     function sendPrompt() {
       const txt = userInput.value.trim();
       if (!txt) return;
       userInput.value = "";
-      showBalloon(txt, "💬 Tú");
+      window._doShowBalloon(txt, "💬 Tú");
       if (currentAgentInstance) currentAgentInstance.play("Thinking");
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriPrompt) {
         window.webkit.messageHandlers.sayriPrompt.postMessage(txt);
@@ -375,8 +398,11 @@
       if (e.key === "Enter") sendPrompt();
     });
 
-    // Default agent initialization
-    loadAgent("Clippy");
+    if (window.pendingAgent) {
+      loadAgent(window.pendingAgent);
+    } else {
+      loadAgent("Clippy");
+    }
   </script>
 </body>
 </html>
