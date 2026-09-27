@@ -19,13 +19,14 @@ import os
 import socket
 import threading
 import time
+from dataclasses import replace
 from typing import Any, Optional
 
 from . import __version__, config, paths
 from .core import CoreUI, SayriCore
 from .domain.agent_creator import AgentCreator
 from .domain.cron_scheduler import Routine, cron_scheduler
-from .domain.models import AgentProfile
+from .domain.models import AgentProfile, SandboxLevel
 from .domain.secrets_manager import secrets_manager
 from .gateway_supervisor import gateway_supervisor
 from .ipc import SayriServer, SOCK_NAME, socket_path
@@ -292,7 +293,14 @@ class SayriDaemon:
             key = path
         if group not in config.DEFAULTS or key not in config.DEFAULTS[group]:
             raise ValueError(f"unknown setting: {group}.{key}")
-        return {"group": group, "key": key, "value": config.config.get(group, key)}
+        # Credentials never leave the daemon in the clear, not even when the
+        # caller asks for that exact key. A front-end that needs to change one
+        # writes through config_set, which takes a new value.
+        return {
+            "group": group,
+            "key": key,
+            "value": _mask_secret_value(key, config.config.get(group, key)),
+        }
 
     def _cmd_config_set(self, params: dict) -> dict:
         path = str(params.get("key", "")).strip()
@@ -548,6 +556,17 @@ class SayriDaemon:
                 return []
             return [part.strip() for part in str(value).split(",") if part.strip()]
 
+        # An empty allow-list means "no restriction", not "no tools". The panel
+        # leaves these blank to say "use whatever you need", and silently
+        # substituting a short default list would take that choice away.
+        sandbox_level = str(params.get("sandbox_level", "")).strip()
+        level = existing.sandbox.level if existing is not None else None
+        if sandbox_level:
+            try:
+                level = SandboxLevel(sandbox_level)
+            except ValueError:
+                raise ValueError(f"unknown isolation level: {sandbox_level}")
+
         profile = AgentProfile(
             id=agent_id or str(params.get("name", "")).strip().lower().replace(" ", "-"),
             name=str(params.get("name", "")).strip() or "New agent",
@@ -556,18 +575,26 @@ class SayriDaemon:
             custom_instructions=str(params.get("custom_instructions", "")),
             allowed_skills=_str_list(params.get("allowed_skills")),
             allowed_plugins=_str_list(params.get("allowed_plugins")),
-            allowed_tools=_str_list(params.get("allowed_tools")) or ["bash", "read_skill", "search_history"],
+            allowed_tools=_str_list(params.get("allowed_tools")),
             investigation_loop=bool(params.get("investigation_loop", True)),
             reinforcement_learning=bool(params.get("reinforcement_learning", True)),
         )
+        if level is not None:
+            profile.sandbox = replace(profile.sandbox, level=level)
         if existing is not None:
             profile.id = existing.id
             profile.created_at = existing.created_at
             profile.is_builtin = existing.is_builtin
             profile.model = existing.model
-            profile.sandbox = existing.sandbox
-        saved_id = AgentCreator.save_agent(profile)
-        return {"id": saved_id, "name": profile.name}
+            # The rest of the sandbox (timeout, network, binary lists) belongs
+            # to the stored agent; only the level is the panel's to change.
+            profile.sandbox = replace(existing.sandbox, level=level) if level is not None \
+                else existing.sandbox
+        # `save_agent` returns the file it wrote, but every other agent command
+        # (`agent_delete`, `agent_switch`) takes the slug id, so the reply has to
+        # carry the id and not the path.
+        AgentCreator.save_agent(profile)
+        return {"id": profile.id, "name": profile.name}
 
     def _cmd_agent_delete(self, params: dict) -> dict:
         agent_id = str(params.get("agent_id", "")).strip()

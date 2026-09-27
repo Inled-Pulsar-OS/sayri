@@ -93,6 +93,25 @@ class AgentEngine:
 
         custom_instr = f"\nSPECIFIC AGENT INSTRUCTIONS:\n{profile.custom_instructions}\n" if getattr(profile, "custom_instructions", "") else ""
 
+        # An empty tool list means "no restriction": leaving the field blank in
+        # Settings is how the user says "use whatever you need", the same way
+        # an empty allowed_skills already means "every installed skill". A
+        # non-empty list is a real instruction to the model. Note that the
+        # isolation level above stays the boundary that actually blocks
+        # execution, so this only narrows what the model reaches for.
+        allowed_tools = [str(t).strip() for t in (getattr(profile, "allowed_tools", []) or []) if str(t).strip()]
+        if is_level_0:
+            # The isolation level already forbids every tool, so saying "no
+            # restrictions" here would contradict it.
+            tool_policy = ""
+        elif allowed_tools:
+            tool_policy = (
+                "TOOL RESTRICTIONS (this agent may only use these tools; do not attempt any other):\n"
+                + "\n".join(f"- {t}" for t in allowed_tools) + "\n"
+            )
+        else:
+            tool_policy = "TOOL RESTRICTIONS: none. You may use any tool you need, as long as it stays within your isolation level.\n"
+
         loop_protocol = ""
         if getattr(profile, "investigation_loop", True) and not is_level_0:
             loop_protocol = (
@@ -135,6 +154,7 @@ class AgentEngine:
             f"Security: {sandbox_info}\n"
             f"{custom_instr}\n"
             f"SANDBOX AND EXECUTION POLICY:\n{execution_policy}\n\n"
+            f"{tool_policy}\n"
             "YOUR CAPABILITIES IN PULSAR OS:\n"
             "1. System Orchestration: You can read files, open applications and run tools within your security limits.\n"
             "2. Sub-Agent Creation and Management: You can create sub-agents configured with different models and sandbox levels.\n"

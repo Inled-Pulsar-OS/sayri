@@ -99,7 +99,9 @@ class AgentProfile:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     allowed_skills: List[str] = field(default_factory=list)
     allowed_plugins: List[str] = field(default_factory=list)
-    allowed_tools: List[str] = field(default_factory=lambda: ["bash", "read_skill", "search_history"])
+    # Empty means "no tool restriction" (the isolation level is what actually
+    # bounds execution). A non-empty list names the only tools to use.
+    allowed_tools: List[str] = field(default_factory=list)
     custom_instructions: str = ""
     investigation_loop: bool = True
     reinforcement_learning: bool = True

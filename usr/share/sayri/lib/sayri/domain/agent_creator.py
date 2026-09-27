@@ -69,7 +69,7 @@ class AgentCreator:
                     ),
                     allowed_skills=data.get("allowed_skills", []),
                     allowed_plugins=data.get("allowed_plugins", []),
-                    allowed_tools=data.get("allowed_tools", ["bash", "read_skill", "search_history"]),
+                    allowed_tools=data.get("allowed_tools", []),
                     custom_instructions=data.get("custom_instructions", ""),
                     investigation_loop=bool(data.get("investigation_loop", True)),
                     reinforcement_learning=bool(data.get("reinforcement_learning", True)),
