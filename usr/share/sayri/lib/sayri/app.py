@@ -1141,6 +1141,15 @@ class SayriApp(Gtk.Application):
                 self._indicator_proc.terminate()
             except Exception:
                 pass
+        # Detached UI plugins (companions, custom UIs) are not our children:
+        # without this they survive "Exit" and keep floating on the desktop.
+        try:
+            from . import sysinfo as _sysinfo
+            stopped = _sysinfo.stop_ui_plugins()
+            if stopped:
+                print(f"[Sayri] Stopped UI plugins: {', '.join(stopped)}")
+        except Exception as exc:
+            print(f"[Sayri] UI plugin shutdown notice: {exc}")
         sock_path = os.path.join(paths.state_dir(), "sayri.sock")
         if os.path.exists(sock_path):
             try:

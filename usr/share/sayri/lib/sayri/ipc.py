@@ -434,6 +434,10 @@ class SayriClient:
             pass
 
     # -------------------------------------------------------- convenience
+    def call(self, cmd: str, params: Optional[dict] = None, timeout: float = 30.0):
+        """Convenience alias for request()."""
+        return self.request(cmd, params=params, timeout=timeout)
+
     def ping(self, timeout: float = 3.0) -> bool:
         try:
             return self.request("ping", timeout=timeout) == "pong"

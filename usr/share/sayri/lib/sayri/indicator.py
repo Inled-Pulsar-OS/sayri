@@ -27,7 +27,7 @@ except Exception:
     except Exception:
         AppIndicator = None
 
-from sayri import config, paths
+from sayri import config, paths, sysinfo
 
 Gtk.init(sys.argv)
 
@@ -77,6 +77,27 @@ def send_sock_command(cmd: str) -> bool:
         s.recv(1024)
         s.close()
         return True
+    except Exception:
+        return False
+
+
+def send_daemon_command(cmd: str) -> bool:
+    """Talk to the daemon control socket (``sayri-daemon.sock``).
+
+    ``send_sock_command`` only reaches the desktop UI process, which may not be
+    running at all. Anything that must survive regardless of which front-end
+    happens to be open (Exit, killall) has to go through the daemon instead.
+    """
+    try:
+        from sayri import ipc
+        client = ipc.SayriClient()
+        try:
+            if not client.connect(timeout=1.5):
+                return False
+            client.request(cmd, timeout=3.0)
+            return True
+        finally:
+            client.close()
     except Exception:
         return False
 
@@ -160,7 +181,22 @@ class SayriIndicator:
         self._settings_proc = subprocess.Popen([sys.executable, "-m", "sayri.settings_cajita"], env=env)
 
     def _on_quit(self, _item=None) -> None:
-        send_sock_command("quit")
+        # "Exit" has to mean "Sayri is gone", not "the tray icon is gone".
+        # The daemon owns the companion windows (its core.shutdown() stops
+        # every UI plugin), so ask it first through its own control socket:
+        # sayri.sock may belong to the desktop UI process instead of the
+        # daemon, and a double "quit" would shut the daemon down twice.
+        if send_daemon_command("quit"):
+            pass
+        elif not send_sock_command("quit"):
+            # No daemon and no UI process answered, so nobody would clean up
+            # the companions. Do it here rather than leave windows stranded.
+            try:
+                stopped = sysinfo.stop_ui_plugins()
+                if stopped:
+                    print(f"[Sayri] Stopped UI plugins: {', '.join(stopped)}")
+            except Exception as exc:
+                print(f"[Sayri] UI plugin shutdown notice: {exc}")
         if self._sayri_proc and self._sayri_proc.poll() is None:
             self._sayri_proc.terminate()
         if self._settings_proc and self._settings_proc.poll() is None:

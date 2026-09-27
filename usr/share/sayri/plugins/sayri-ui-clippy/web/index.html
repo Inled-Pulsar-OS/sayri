@@ -11,6 +11,11 @@
       user-select: none;
       -webkit-user-select: none;
     }
+    input, textarea, button, select {
+      user-select: auto !important;
+      -webkit-user-select: auto !important;
+      pointer-events: auto !important;
+    }
     html, body {
       width: 100vw;
       height: 100vh;
@@ -40,11 +45,11 @@
       top: 10px;
       right: 12px;
       max-width: 360px;
-      min-width: 220px;
+      min-width: 240px;
       background-color: #ffffdd;
       border: 1.5px solid #000000;
       border-radius: 8px;
-      box-shadow: 3px 4px 10px rgba(0,0,0,0.3);
+      box-shadow: 3px 4px 12px rgba(0,0,0,0.35);
       padding: 10px 12px;
       color: #111111;
       font-size: 13px;
@@ -90,6 +95,8 @@
     .balloon-text {
       white-space: pre-wrap;
       word-break: break-word;
+      max-height: 140px;
+      overflow-y: auto;
     }
     /* XUI declarative skeleton nodes */
     .xui-container {
@@ -147,23 +154,378 @@
       display: flex;
       gap: 4px;
       margin-top: 4px;
+      align-items: center;
     }
     .input-row input {
       flex: 1;
-      border: 1px solid #7f9db9;
-      padding: 4px 6px;
+      border: 1.5px solid #7f9db9;
+      padding: 5px 8px;
       font-size: 12px;
-      border-radius: 2px;
+      border-radius: 4px;
       outline: none;
-      background: #fff;
+      background: #ffffff;
+      color: #000000;
+    }
+    .input-row input:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px #2563eb;
     }
     .input-row button {
       background: #ece9d8;
       border: 1px solid #7f9db9;
-      padding: 4px 8px;
+      padding: 5px 8px;
       font-size: 12px;
       cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .input-row button:hover {
+      background: #f5f4ea;
+    }
+    .input-row button:active {
+      transform: translateY(1px);
+    }
+    .input-row button.listening {
+      background: #ef4444 !important;
+      color: #ffffff !important;
+      border-color: #b91c1c !important;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+      70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+
+    /* ── Cajita panel ──────────────────────────────────────────────────
+       The full assistant card lives inside the companion balloon, keeping the
+       retro Windows chrome so it still belongs to Clippy. It shares the
+       balloon slot, so only one of the two is ever visible. */
+    #cajita {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 440px;
+      height: 100%;
+      background-color: #ffffdd;
+      border-left: 1.5px solid #000000;
+      box-shadow: -3px 0 12px rgba(0, 0, 0, 0.35);
+      color: #111111;
+      font-size: 12px;
+      display: none;
+      flex-direction: column;
+      z-index: 21000;
+      pointer-events: auto;
+      overflow: hidden;
+    }
+    .cajita-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px;
+      background: linear-gradient(90deg, #000080, #1084d0);
+      color: #ffffff;
+      font-weight: bold;
+      font-size: 11px;
+      letter-spacing: 0.3px;
+      flex: 0 0 auto;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .cajita-titlebar .spacer {
+      flex: 1;
+    }
+    .cajita-titlebar button {
+      background: #c0c0c0;
+      border: 1px solid #000;
+      color: #000;
+      font-size: 10px;
+      font-weight: bold;
+      line-height: 1;
+      padding: 2px 5px;
+      cursor: pointer;
+      box-shadow: 1px 1px 0 #fff inset, -1px -1px 0 #808080 inset;
+    }
+    .cajita-titlebar button:active {
+      box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.4) inset;
+    }
+    .cajita-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1px;
+      padding: 4px 4px 0 4px;
+      background: #c0c0c0;
+      border-bottom: 1px solid #808080;
+      flex: 0 0 auto;
+    }
+    .cajita-tab {
+      background: #c0c0c0;
+      border: 1px solid #808080;
+      border-bottom: none;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      color: #000;
+      box-shadow: 1px 1px 0 #fff inset;
+    }
+    .cajita-tab.active {
+      background: #ffffdd;
+      font-weight: bold;
+      position: relative;
+      top: 1px;
+      padding-bottom: 4px;
+    }
+    .cajita-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 8px;
+      background: #ffffdd;
+    }
+    .cajita-hint {
+      color: #555555;
+      font-style: italic;
+      padding: 6px 2px;
+    }
+    .cajita-error {
+      background: #ffe0e0;
+      border: 1px solid #cc0000;
+      color: #990000;
+      padding: 5px 7px;
+      margin-bottom: 6px;
+      font-size: 11px;
+      word-break: break-word;
+    }
+    .cajita-ok {
+      background: #e6ffe6;
+      border: 1px solid #2e7d32;
+      color: #1b5e20;
+      padding: 5px 7px;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .cajita-item {
+      border: 1px solid #b0a97f;
+      background: #fffef0;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .cajita-item.active {
+      border-color: #000080;
+      background: #e8f0fb;
+      box-shadow: 1px 1px 0 #b8c8e8 inset;
+    }
+    .cajita-item .grow {
+      flex: 1;
+      min-width: 0;
+    }
+    .cajita-item .title {
+      font-weight: bold;
+      font-size: 12px;
+      word-break: break-word;
+    }
+    .cajita-item .sub {
+      color: #555555;
+      font-size: 11px;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .cajita-item .actions {
+      display: flex;
+      gap: 3px;
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .cajita-btn {
+      background: #ece9d8;
+      border: 1px solid #7f9db9;
       border-radius: 2px;
+      padding: 2px 7px;
+      font-size: 11px;
+      cursor: pointer;
+      color: #000;
+      box-shadow: 1px 1px 0 #fff inset, 1px 1px 2px rgba(0, 0, 0, 0.15);
+    }
+    .cajita-btn:hover {
+      background: #f5f4ea;
+    }
+    .cajita-btn:active {
+      box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3) inset;
+    }
+    .cajita-btn.primary {
+      background: #d4e4f7;
+      border-color: #3b82f6;
+      font-weight: bold;
+    }
+    .cajita-btn.danger {
+      background: #ffe0e0;
+      border-color: #cc0000;
+      color: #990000;
+    }
+    /* A section with typed-but-unsaved edits marks its Save button, so an API
+       key that was never stored does not look like it worked. */
+    .cajita-btn.dirty {
+      background: #fff3cd;
+      border-color: #b8860b;
+    }
+    .cajita-btn.dirty::after {
+      content: " *";
+    }
+    .cajita-btn[disabled] {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .saved-tick {
+      color: #1b6b1b;
+      font-weight: bold;
+    }
+    .cajita-field {
+      margin-bottom: 7px;
+    }
+    .cajita-field > label {
+      display: block;
+      font-weight: bold;
+      font-size: 11px;
+      margin-bottom: 2px;
+    }
+    .cajita-field input[type="text"],
+    .cajita-field input[type="password"],
+    .cajita-field input[type="number"],
+    .cajita-field select,
+    .cajita-field textarea {
+      width: 100%;
+      border: 1px solid #7f9db9;
+      padding: 3px 5px;
+      font-size: 11px;
+      border-radius: 2px;
+      outline: none;
+      background: #ffffff;
+      color: #000000;
+      font-family: inherit;
+    }
+    .cajita-field textarea {
+      min-height: 52px;
+      resize: vertical;
+    }
+    .cajita-field input:focus,
+    .cajita-field select:focus,
+    .cajita-field textarea:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px #2563eb;
+    }
+    .cajita-field .note {
+      color: #666666;
+      font-size: 10px;
+      margin-top: 2px;
+    }
+    .cajita-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .cajita-row input[type="checkbox"] {
+      margin: 0;
+    }
+    .cajita-form {
+      border: 1px solid #b0a97f;
+      background: #fdf6cc;
+      padding: 8px;
+      margin-bottom: 8px;
+    }
+    .cajita-form h4 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #775500;
+      margin-bottom: 6px;
+    }
+    .cajita-msg {
+      margin-bottom: 6px;
+      padding: 5px 7px;
+      font-size: 11px;
+      word-break: break-word;
+      white-space: pre-wrap;
+      border: 1px solid transparent;
+    }
+    .cajita-msg.user {
+      background: #e8f0fb;
+      border-color: #b8c8e8;
+    }
+    .cajita-msg.assistant {
+      background: #f2fbe8;
+      border-color: #c3e0a0;
+    }
+    .cajita-msg .who {
+      font-weight: bold;
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #666666;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .cajita-status {
+      padding: 4px 8px;
+      background: #ece9d8;
+      border-top: 1px solid #b0a97f;
+      font-size: 10px;
+      color: #444444;
+      flex: 0 0 auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .cajita-status .grow {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cajita-badge {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: bold;
+      padding: 1px 4px;
+      border: 1px solid #808080;
+      background: #ece9d8;
+      border-radius: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .cajita-badge.on {
+      background: #d7f0d7;
+      border-color: #2e7d32;
+      color: #1b5e20;
+    }
+    .cajita-badge.off {
+      background: #f0f0f0;
+      border-color: #999999;
+      color: #666666;
+    }
+    .cajita-search {
+      width: 100%;
+      border: 1px solid #7f9db9;
+      padding: 3px 5px;
+      font-size: 11px;
+      margin-bottom: 6px;
+      outline: none;
+    }
+    ::-webkit-scrollbar {
+      width: 12px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #e0e0e0;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #c0c0c0;
+      border: 1px solid #808080;
     }
   </style>
 </head>
@@ -176,13 +538,30 @@
       <div id="balloon-text" class="balloon-text"></div>
       <div id="xui-area" class="xui-container"></div>
       <div class="input-row">
-        <button id="settings-btn" title="Ajustes de Sayri y selección de personaje">⚙️</button>
-        <button id="mic-btn" title="Escuchar por voz (Push to talk)">🎙️</button>
-        <input type="text" id="user-input" placeholder="Pregúntame algo a Sayri..." autocomplete="off">
-        <button id="send-btn" title="Enviar consulta">➤</button>
+        <button id="settings-btn" title="Open the Sayri Cajita">⚙️</button>
+        <button id="mic-btn" title="Listen by voice (push to talk)">🎙️</button>
+        <input type="text" id="user-input" placeholder="Ask Sayri something..." autocomplete="off">
+        <button id="send-btn" title="Send message">➤</button>
       </div>
     </div>
     <div id="agent-anchor"></div>
+
+    <!-- Cajita: the full assistant card, docked where the balloon lives -->
+    <div id="cajita">
+      <div class="cajita-titlebar">
+        <span id="cajita-title">📦 Sayri Cajita</span>
+        <span class="spacer"></span>
+        <button id="cajita-refresh" title="Reload this tab">↻</button>
+        <button id="cajita-close" title="Close the Cajita">✕</button>
+      </div>
+      <div class="cajita-tabs" id="cajita-tabs"></div>
+      <div class="cajita-body" id="cajita-body"></div>
+      <div class="cajita-status">
+        <span class="cajita-badge" id="cajita-state">idle</span>
+        <span id="cajita-agent" class="grow">Sayri</span>
+        <span id="cajita-version"></span>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -203,17 +582,53 @@
     window.onDaemonEvent = function(event) {
       if (window._doOnDaemonEvent) {
         window._doOnDaemonEvent(event);
+      } else {
+        // The page is not ready yet: hold on to it so nothing is lost.
+        var q = window.__sayriEarly = window.__sayriEarly || [];
+        q.push(event);
+        if (q.length > 200) q.splice(0, q.length - 200);
       }
+    };
+    // Bridge for the Cajita panel: Python answers with onCallResult().
+    // Declared here (not in the module script) so it exists before the module
+    // finishes loading, otherwise the first reply could arrive too early.
+    window.__cajitaPending = Object.create(null);
+    window.onCallResult = function(payload) {
+      if (!payload || !payload.req_id) return;
+      const resolver = window.__cajitaPending[payload.req_id];
+      if (!resolver) return;
+      delete window.__cajitaPending[payload.req_id];
+      if (payload.ok) resolver.resolve(payload.data);
+      else resolver.reject(new Error(payload.error || "request failed"));
+    };
+    window.cajitaCall = function(req_id, cmd, params) {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriCall) {
+        window.webkit.messageHandlers.sayriCall.postMessage(JSON.stringify({
+          req_id: req_id, cmd: cmd, params: params || {}
+        }));
+        return true;
+      }
+      return false;
+    };
+    window.postAction = function(action_id) {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
+        window.webkit.messageHandlers.sayriAction.postMessage(action_id);
+        return true;
+      }
+      return false;
     };
   </script>
 
   <script type="module">
     import { initAgent } from "./dist/index.mjs";
     import * as allAgents from "./dist/agents/index.mjs";
+    import * as cajita from "./cajita.js";
 
     let currentAgentInstance = null;
     let currentAgentName = "Clippy";
+    let isListening = false;
     let hideBalloonTimeout = null;
+    let soundEffects = true;
 
     const balloon = document.getElementById("balloon");
     const headerTitle = document.getElementById("header-title");
@@ -221,13 +636,55 @@
     const xuiArea = document.getElementById("xui-area");
     const userInput = document.getElementById("user-input");
     const sendBtn = document.getElementById("send-btn");
+    const micBtn = document.getElementById("mic-btn");
+    const settingsBtn = document.getElementById("settings-btn");
 
-    window._doShowBalloon = function(text, header = "💡 Sayri Assistant") {
+    // ── balloon plumbing ────────────────────────────────────────────────
+    // `kind` marks how sticky a message is. Right after a reply or a provider
+    // error the daemon streams `state: listening` again, and that notice must
+    // not wipe out the reply / the error the user actually asked for.
+    const STICKY_MS = { reply: 8000, error: 25000 };
+    let lastKind = "info";
+    let lastAt = 0;
+    let stickyTimer = null;
+    let streamBuf = "";
+    let transcript = [];
+
+    window._doShowBalloon = function(text, header = "💡 Sayri Assistant", kind = "info") {
+      lastKind = kind || "info";
+      lastAt = Date.now();
       headerTitle.textContent = header;
       balloonText.textContent = text;
       balloon.style.display = "flex";
       if (hideBalloonTimeout) clearTimeout(hideBalloonTimeout);
+      if (stickyTimer) { clearTimeout(stickyTimer); stickyTimer = null; }
+      const sticky = STICKY_MS[lastKind];
+      if (sticky) {
+        // Once the sticky window expires, tell the user the mic is hot again
+        // (but only if it really is), instead of silently going quiet.
+        stickyTimer = setTimeout(() => {
+          stickyTimer = null;
+          if (isListening && !hasFreshPayload()) {
+            window._doShowBalloon("Listening to you... Speak now.", "🎙️ Microphone", "mic");
+          }
+        }, sticky + 50);
+      }
     };
+
+    function hasFreshPayload() {
+      const sticky = STICKY_MS[lastKind];
+      return !!sticky && (Date.now() - lastAt) < sticky;
+    }
+
+    function playAny(names) {
+      if (!currentAgentInstance || !soundEffects) return false;
+      for (const n of names) {
+        try {
+          if (currentAgentInstance.play(n)) return true;
+        } catch (e) {}
+      }
+      return false;
+    }
 
     async function loadAgent(agentName) {
       if (currentAgentInstance) {
@@ -262,7 +719,7 @@
         if (currentAgentInstance) currentAgentInstance.play("Wave");
       }, 500);
 
-      window._doShowBalloon(`¡Hola! Soy tu asistente Sayri (${agentName}). ¿En qué puedo ayudarte?`);
+      window._doShowBalloon(`Hi! I'm your Sayri assistant (${agentName}). How can I help?`);
     }
 
     window._doSwitchAgent = function(name) {
@@ -340,63 +797,249 @@
       balloon.style.display = "flex";
     };
 
-    window._doOnDaemonEvent = function(event) {
-      const ev = event.event;
-      if (ev === "state") {
-        const st = event.state;
-        if (st === "listening") {
-          if (currentAgentInstance) currentAgentInstance.play("Hearing_1") || currentAgentInstance.play("Listening") || currentAgentInstance.play("LookDown");
-          window._doShowBalloon("Escuchando tu voz...", "🎙️ Micrófono");
-        } else if (st === "thinking") {
-          if (currentAgentInstance) currentAgentInstance.play("Thinking") || currentAgentInstance.play("Searching");
-          window._doShowBalloon("Pensando la respuesta...", "🤔 Sayri");
-        } else if (st === "speaking") {
-          if (currentAgentInstance) currentAgentInstance.play("Explain") || currentAgentInstance.play("Wave");
+    function updateMicUI(listening) {
+      isListening = listening;
+      if (micBtn) {
+        if (listening) {
+          micBtn.classList.add("listening");
+          micBtn.textContent = "🔴";
+          micBtn.title = "Microphone active (click to stop)";
+        } else {
+          micBtn.classList.remove("listening");
+          micBtn.textContent = "🎙️";
+          micBtn.title = "Listen by voice (push to talk)";
         }
-      } else if (ev === "utterance") {
-        window._doShowBalloon(event.text || "", "🎙️ Transcripción");
-      } else if (ev === "assistant_delta" || ev === "assistant_done") {
-        window._doShowBalloon(event.text || "", "💬 Sayri");
-        if (currentAgentInstance) currentAgentInstance.play("Explain");
-      } else if (ev === "render_xui") {
-        renderXuiSkeleton(event.screen);
+      }
+    }
+
+    // Event names actually broadcast by sayri.daemon.BridgeUI:
+    //   ready, state, audio_level, mic, busy, partial, user,
+    //   assistant_delta, assistant_done, tool_start, tool_finish,
+    //   hint, error, speaking, show, hide, conversation_started, shutdown
+    window._doOnDaemonEvent = function(event) {
+      if (!event || !event.event) return;
+      const ev = event.event;
+
+      switch (ev) {
+        case "state": {
+          const st = event.state;
+          if (st === "listening" || st === "activated") {
+            updateMicUI(true);
+            playAny(["Hearing_1", "Listening", "LookDown"]);
+            if (!hasFreshPayload()) {
+              window._doShowBalloon("Listening to you... Speak now.", "🎙️ Microphone", "mic");
+            }
+          } else if (st === "thinking") {
+            updateMicUI(false);
+            playAny(["Thinking", "Searching"]);
+            if (!hasFreshPayload()) {
+              window._doShowBalloon("Thinking about the answer...", "🤔 Sayri", "status");
+            }
+          } else if (st === "speaking") {
+            updateMicUI(false);
+            playAny(["Explain", "Wave"]);
+          } else if (st === "idle") {
+            updateMicUI(false);
+            playAny(["Idle"]);
+          }
+          break;
+        }
+
+        case "mic":
+          updateMicUI(!!event.active);
+          break;
+
+        case "audio_level":
+        case "busy":
+        case "ready":
+        case "show":
+        case "hide":
+          break;
+
+        case "partial":
+        case "utterance":   // "utterance" kept as a legacy alias
+          if (event.text) {
+            window._doShowBalloon(event.text, "🎙️ Transcription", "partial");
+          }
+          break;
+
+        case "user":
+          streamBuf = "";
+          if (event.text) {
+            window._doShowBalloon(event.text, "💬 You", "user");
+            pushTranscript("user", event.text);
+          }
+          break;
+
+        case "assistant_delta": {
+          const piece = event.delta != null ? event.delta : (event.text || "");
+          if (!piece) break;
+          streamBuf += piece;
+          window._doShowBalloon(streamBuf, "💬 Sayri", "reply");
+          pushTranscript("assistant", streamBuf);
+          playAny(["Explain"]);
+          break;
+        }
+
+        case "assistant_done": {
+          const text = event.text || streamBuf;
+          streamBuf = "";
+          if (text) {
+            window._doShowBalloon(text, "💬 Sayri", "reply");
+            pushTranscript("assistant", text);
+            closeTranscriptTurn();
+            playAny(["Explain", "Wave"]);
+          }
+          break;
+        }
+
+        case "error": {
+          const msg = event.error || event.text || "Unknown error";
+          streamBuf = "";
+          updateMicUI(false);
+          window._doShowBalloon(msg, "❌ Sayri Error", "error");
+          playAny(["Confused", "LookDown", "Idle"]);
+          break;
+        }
+
+        case "tool_start":
+          streamBuf = "";
+          window._doShowBalloon("Running: " + (event.command || ""), "⚙️ Sayri", "status");
+          break;
+
+        case "tool_finish":
+          if (event.exit_code && !hasFreshPayload()) {
+            window._doShowBalloon("Command finished (code " + event.exit_code + ")", "⚙️ Sayri", "status");
+          }
+          break;
+
+        case "hint":
+          if (event.text && !hasFreshPayload()) {
+            window._doShowBalloon(event.text, "💡 Sayri", "status");
+          }
+          break;
+
+        case "conversation_started":
+          streamBuf = "";
+          transcript = [];
+          window._doShowBalloon("New conversation started.", "💡 Sayri", "status");
+          break;
+
+        case "shutdown":
+          window._doShowBalloon("Sayri has closed.", "💡 Sayri", "status");
+          break;
+
+        case "render_xui":
+          renderXuiSkeleton(event.screen);
+          break;
       }
     };
-    window.onDaemonEvent = window._doOnDaemonEvent;
+    window.onDaemonEvent = function (event) {
+      window._doOnDaemonEvent(event);
+      // Re-broadcast as a DOM event so the Cajita panel can subscribe to what
+      // it cares about (download progress, settings changed elsewhere) without
+      // this file having to know the full event vocabulary.
+      if (event && typeof event === "object") {
+        window.dispatchEvent(new CustomEvent("sayri-daemon-event", { detail: event }));
+      }
+    };
+
+    // Drain whatever arrived before this page was ready. The queue is drained
+    // through the real handler so those events get the same re-broadcast as
+    // everything else (the Cajita panel listens for it).
+    (function () {
+      var queued = window.__sayriEarly;
+      if (!queued || !queued.length) { window.__sayriEarly = null; return; }
+      window.__sayriEarly = null;
+      for (var i = 0; i < queued.length; i++) window.onDaemonEvent(queued[i]);
+    })();
 
     function sendPrompt() {
       const txt = userInput.value.trim();
       if (!txt) return;
       userInput.value = "";
-      window._doShowBalloon(txt, "💬 Tú");
-      if (currentAgentInstance) currentAgentInstance.play("Thinking");
+      streamBuf = "";
+      window._doShowBalloon(txt, "💬 You", "user");
+      pushTranscript("user", txt);
+      playAny(["Thinking", "Searching"]);
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriPrompt) {
         window.webkit.messageHandlers.sayriPrompt.postMessage(txt);
       }
     }
 
-    const settingsBtn = document.getElementById("settings-btn");
-    const micBtn = document.getElementById("mic-btn");
-
     if (settingsBtn) {
-      settingsBtn.onclick = () => {
-        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
-          window.webkit.messageHandlers.sayriAction.postMessage("open_settings");
-        }
+      settingsBtn.onclick = (e) => {
+        e.stopPropagation();
+        // The Cajita panel carries the whole settings surface now, so the
+        // gear opens it instead of spawning a separate app window.
+        window.toggleCajita();
       };
+      settingsBtn.title = "Open the Sayri Cajita";
     }
     if (micBtn) {
-      micBtn.onclick = () => {
+      micBtn.onclick = (e) => {
+        e.stopPropagation();
         if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sayriAction) {
           window.webkit.messageHandlers.sayriAction.postMessage("toggle_mic");
         }
       };
     }
 
-    sendBtn.onclick = sendPrompt;
+    if (sendBtn) {
+      sendBtn.onclick = (e) => {
+        e.stopPropagation();
+        sendPrompt();
+      };
+    }
+
     userInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") sendPrompt();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendPrompt();
+      }
     });
+
+    // ── Cajita panel ────────────────────────────────────────────────────
+    // The full assistant card lives in its own module; this is only the small
+    // amount of shared state it needs from the balloon.
+    window.sayriBalloon = {
+      get transcript() { return transcript; },
+      setTranscript(turns) { transcript = turns || []; },
+      resetTranscript() { transcript = []; },
+      show(text, header, kind) { window._doShowBalloon(text, header, kind); },
+      hide() { balloon.style.display = "none"; },
+    };
+    // The plugin host injects the companion's own settings once the page has
+    // loaded: the sound toggle drives playback here, the rest feed the panel.
+    window.applyPluginInfo = (info) => {
+      if (info && typeof info.sound_effects === "boolean") soundEffects = info.sound_effects;
+      if (info && info.character) currentAgentName = info.character;
+      cajita.applyInfo(info);
+    };
+    window.toggleCajita = () => cajita.setOpen(!cajita.isOpen());
+    cajita.init();
+
+    // ── the live conversation, mirrored into the Cajita Chat tab ────────
+    function pushTranscript(role, text) {
+      if (!text) return;
+      if (role === "user") {
+        transcript.push({ role: "user", text: text });
+        return;
+      }
+      // Streaming deltas arrive as fragments: keep rewriting the last
+      // assistant turn instead of appending one row per token.
+      const last = transcript[transcript.length - 1];
+      if (last && last.role === "assistant" && last.streaming) {
+        last.text = text;
+      } else {
+        transcript.push({ role: "assistant", text: text, streaming: true });
+      }
+    }
+
+    function closeTranscriptTurn() {
+      const last = transcript[transcript.length - 1];
+      if (last && last.role === "assistant") last.streaming = false;
+    }
 
     if (window.pendingAgent) {
       loadAgent(window.pendingAgent);

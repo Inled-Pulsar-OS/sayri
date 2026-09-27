@@ -1768,7 +1768,15 @@ class SayriCajita(Gtk.Box):
                 cfg = getattr(self.app, "cfg", None)
                 if cfg:
                     cfg.set_string("ui", "default_ui", pid)
-                subprocess.Popen([sys.executable, str(gate or (Path(p_dir) / "main.py"))], **sysinfo.spawn_flags())
+                # Same reason as cli.cmd_ui: drop the orb's gtk4-layer-shell
+                # preload, it is fatal for GTK3-based UI plugins.
+                env = dict(os.environ)
+                env.pop("LD_PRELOAD", None)
+                subprocess.Popen(
+                    [sys.executable, str(gate or (Path(p_dir) / "main.py"))],
+                    env=env,
+                    **sysinfo.spawn_flags(),
+                )
                 st_lbl.set_markup(f"<span size='8000' foreground='#86efac'>✓ {GLib.markup_escape_text(manifest.get('name', pid))} launched</span>")
 
             btn_launch_ui.connect("clicked", _launch_ui_proc)

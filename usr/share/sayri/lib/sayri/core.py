@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import __version__, config, llm, paths, sound, stt as stt_mod, texts, tts as tts_mod
+from . import __version__, config, llm, paths, sound, stt as stt_mod, sysinfo, texts, tts as tts_mod
 from sayri.domain.models import AgentProfile, SandboxLevel
 from sayri.domain.agent_engine import AgentEngine
 from sayri.domain.agent_creator import AgentCreator
@@ -702,4 +702,13 @@ class SayriCore:
         self.tts.cancel()
         sound.stop_all()
         self._stop_session()
+        # Detached UI plugins (companions, custom UIs) are not children of this
+        # process, so they must be told to leave explicitly or they keep
+        # floating on the desktop after "Exit" in the appindicator.
+        try:
+            stopped = sysinfo.stop_ui_plugins()
+            if stopped:
+                print(f"[Sayri] Stopped UI plugins: {', '.join(stopped)}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Sayri] UI plugin shutdown notice: {exc}")
         self.ui.on_shutdown()

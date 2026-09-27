@@ -1804,22 +1804,64 @@ def cmd_ui(pairs: dict, rest: list[str]) -> int:
         return 1
 
     _ensure_daemon()
-    proc = subprocess.Popen(
-        [sys.executable, str(gateway)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **sysinfo.spawn_flags(),
-    )
+    sysinfo.ensure_indicator()
+
     from . import paths as _paths
-    Path(_paths.state_dir()).mkdir(parents=True, exist_ok=True)
-    (Path(_paths.state_dir()) / f"{ui_id}.pid").write_text(str(proc.pid), encoding="utf-8")
+    state_p = Path(_paths.state_dir())
+    state_p.mkdir(parents=True, exist_ok=True)
+    log_file = state_p / f"{ui_id}.log"
+    pid_file = state_p / f"{ui_id}.pid"
+
+    # If already running, notify user
+    if pid_file.is_file():
+        try:
+            old_pid = int(pid_file.read_text(encoding="utf-8").strip())
+            if sysinfo.process_alive(old_pid):
+                print(f"✓ UI plugin '{ui_id}' ya está en ejecución (pid {old_pid})")
+                return 0
+        except Exception:
+            pass
+
+    env = dict(os.environ)
+    lib_path = "/usr/share/sayri/lib"
+    env["PYTHONPATH"] = lib_path + (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
+
+    # UI plugins are standalone GTK apps and some of them are GTK3 based.
+    # The launcher (/usr/bin/sayri) exports LD_PRELOAD=libgtk4-layer-shell.so
+    # so the GTK4 orb's layer-shell is linked before WebKit's libwayland-client.
+    # That library drags in libgtk-4.so.1, which exports the very same
+    # gdk_display_manager_get symbol as libgdk-3.so.0; being preloaded it wins
+    # the global symbol lookup, so GDK3 ends up calling GTK4's uninitialised
+    # implementation and the plugin aborts with
+    #   Gdk-ERROR **: gdk_display_manager_get() was called before gtk_init()
+    # before it can map a single window. Never leak the preload into a plugin.
+    env.pop("LD_PRELOAD", None)
+
+    with open(log_file, "ab", buffering=0) as f:
+        proc = subprocess.Popen(
+            [sys.executable, str(gateway)],
+            stdin=subprocess.DEVNULL,
+            stdout=f,
+            stderr=f,
+            env=env,
+            close_fds=True,
+            **sysinfo.spawn_flags(),
+        )
+
+    pid_file.write_text(str(proc.pid), encoding="utf-8")
     print(f"✓ UI plugin '{ui_id}' iniciado correctamente (pid {proc.pid})")
     return 0
 
 
 def cmd_killall(pairs: dict, rest: list[str]) -> int:
+    # Detached UI plugins first: they own a <id>.pid in the state dir and are not
+    # matched by the command-line patterns below, so without this the companion
+    # windows outlive "kill all".
+    stopped = sysinfo.stop_ui_plugins()
     for pat in ("gateway.py", "sayri.indicator", "python3 -m sayri"):
         sysinfo.kill_process_tree(pattern=pat)
+    if stopped:
+        print(f"stopped UI plugins: {', '.join(stopped)}")
     print("terminated all Sayri processes ✓")
     return 0
 

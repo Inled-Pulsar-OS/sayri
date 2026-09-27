@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from typing import Optional
 
 _OS = platform.system().lower()
@@ -123,7 +124,7 @@ def terminate_pid(pid: int) -> None:
     send_signal(pid, signal.SIGTERM)
 
 
-def process_alive(pid: int) -> bool:
+def is_pid_alive(pid: int) -> bool:
     """Cheap aliveness probe (signal 0). Windows has no POSIX signals, so a
     failed tasklist check means the process is gone."""
     if is_windows():
@@ -138,6 +139,10 @@ def process_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+# Historical name kept so both spellings work across the tree.
+process_alive = is_pid_alive
 
 
 def kill_process_tree(pattern: Optional[str] = None, pid: Optional[int] = None) -> None:
@@ -171,6 +176,78 @@ def kill_process_tree(pattern: Optional[str] = None, pid: Optional[int] = None) 
                 os.kill(int(line), signal.SIGKILL)
             except OSError:
                 pass
+
+
+def _state_dir() -> str:
+    """State dir without importing sayri.paths (keeps this module dependency-free)."""
+    override = os.environ.get("SAYRI_STATE_DIR")
+    if override:
+        return override
+    try:
+        from .paths import state_dir
+        return str(state_dir())
+    except Exception:  # noqa: BLE001
+        return os.path.join(os.path.expanduser("~"), ".local", "share", "sayri")
+
+
+def stop_ui_plugins(skip_ids: Optional[set[str]] = None) -> list[str]:
+    """Terminate every running Sayri UI plugin and return the ids signalled.
+
+    UI plugins are detached background apps (the GTK orb, the classic
+    companions, any custom UI) that each own a ``<id>.pid`` file in the state
+    dir. Nothing in the core shutdown path used to know about them, so they
+    survived "Exit" in the appindicator and ``sayri killall`` and kept floating
+    on the desktop. This is the single place both paths call.
+
+    ``skip_ids`` keeps the built-in orb alive when only the third-party plugins
+    should be stopped.
+    """
+    skip = {s for s in (skip_ids or set()) if s}
+    state = _state_dir()
+    stopped: list[str] = []
+    try:
+        entries = list(os.scandir(state))
+    except OSError:
+        return stopped
+
+    for entry in entries:
+        name = entry.name
+        if not name.endswith(".pid"):
+            continue
+        ui_id = name[:-4]
+        if ui_id in skip or ui_id.startswith("sayri-daemon"):
+            continue
+        pid = None
+        try:
+            pid = int(open(entry.path, encoding="utf-8").read().strip())
+        except (OSError, ValueError):
+            pass
+        if pid and process_alive(pid) and pid != os.getpid():
+            try:
+                terminate_pid(pid)
+            except OSError:
+                pid = None  # it died between the probe and the signal
+            if pid is not None:
+                # Give the plugin a moment to tear its window down, then
+                # insist. A UI that ignores SIGTERM would otherwise survive
+                # the very command meant to close it.
+                for _ in range(20):
+                    if not process_alive(pid):
+                        break
+                    time.sleep(0.1)
+                if process_alive(pid):
+                    try:
+                        send_signal(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                stopped.append(ui_id)
+        # The pid file is stale either way: the process is gone or we just
+        # asked it to leave, so `sayri ui start` can launch it again.
+        try:
+            os.unlink(entry.path)
+        except OSError:
+            pass
+    return stopped
 
 
 def get_primary_geometry_gnome() -> tuple[int, int, int, int] | None:
@@ -212,3 +289,18 @@ def get_primary_geometry_gnome() -> tuple[int, int, int, int] | None:
     except Exception:
         pass
     return None
+
+
+def ensure_indicator() -> None:
+    """Ensure sayri-indicator is running in background for tray access."""
+    try:
+        out = subprocess.run(["pgrep", "-f", "sayri.indicator|sayri-indicator"], capture_output=True, text=True, check=False).stdout
+        if out.strip():
+            return
+    except Exception:
+        pass
+    try:
+        cmd = ["sayri-indicator"] if shutil.which("sayri-indicator") else [sys.executable, "-m", "sayri.indicator"]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **spawn_flags())
+    except Exception:
+        pass

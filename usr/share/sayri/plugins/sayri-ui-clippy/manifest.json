@@ -9,15 +9,15 @@
   "ui": {
     "kind": "character",
     "xui_renderer": "speech-bubble",
-    "sync_instructions": "Selecciona el personaje retro que quieres usar como asistente de escritorio.",
+    "sync_instructions": "Pick the retro character you want as your desktop assistant.",
     "settings": [
       {
         "t": "select",
         "id": "character",
         "key": "character",
-        "label": "Personaje / Avatar",
+        "label": "Character / avatar",
         "default": "Clippy",
-        "hint": "Elige el avatar que aparecerá animado en tu pantalla",
+        "hint": "Choose the avatar that will be animated on your screen",
         "options": [
           {"value": "Clippy", "label": "📎 Clippy (Paperclip)"},
           {"value": "Bonzi", "label": "🐒 Bonzi Buddy (Purple Gorilla)"},
@@ -34,9 +34,9 @@
         "t": "check",
         "id": "sound_effects",
         "key": "sound_effects",
-        "label": "Efectos de sonido clásicos",
+        "label": "Classic sound effects",
         "default": true,
-        "hint": "Reproduce los sonidos nostálgicos al hablar o cambiar de estado"
+        "hint": "Play the nostalgic sounds when speaking or changing state"
       }
     ]
   }
