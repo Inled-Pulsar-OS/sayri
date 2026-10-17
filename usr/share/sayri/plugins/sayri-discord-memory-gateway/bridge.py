@@ -1,8 +1,7 @@
 """Bridge to the local Sayri daemon (UNIX socket, one JSON object per line).
 
-Connects only to that local socket: it never opens a network port and never
-reads the daemon's secrets. The sandbox level is forwarded, so the daemon
-enforces the isolation the gateway instance asked for.
+Only that local socket is used: no network port, no daemon secrets read. The
+sandbox level is forwarded so the daemon enforces the instance's isolation.
 """
 import json
 import os

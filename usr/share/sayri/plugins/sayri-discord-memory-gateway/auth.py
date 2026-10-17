@@ -1,9 +1,8 @@
 """Desktop OTP pairing: only the paired owner may use the gateway.
 
-The desktop writes a 6-digit PIN (0600); ``pair()`` compares it in constant
-time, honours ``expires_at`` and rotates it (no replay). Group/other-readable
-secrets are refused, and failures are persisted so the 5/10min lockout sticks.
-"""
+A 6-digit PIN (0600) is compared in constant time, checked against
+``expires_at`` and rotated (no replay); group/other-readable secrets are
+refused, and failures persist so the 5/10min lockout sticks."""
 import hmac, json, os, random, time
 from pathlib import Path
 

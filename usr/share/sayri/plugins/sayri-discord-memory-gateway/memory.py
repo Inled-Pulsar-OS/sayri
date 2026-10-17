@@ -1,10 +1,6 @@
-"""Per-channel memory capture for the Sayri Discord memory gateway.
-
-Detected items are appended to one markdown file per channel under
-``memory_dir`` (0600 via the gateway's umask 077). ``channel_id`` is reduced
-to digits before use in the filename, so a crafted id can never escape
-``memory_dir``, and captured text is stripped of control characters and
-truncated so a message cannot inject escapes or bloat the file.
+"""Per-channel memory capture: markdown files under ``memory_dir`` (0600 via
+the gateway's umask 077). ``channel_id`` is reduced to digits (no path
+traversal) and captured text is stripped of control chars and truncated.
 """
 import re
 import time
