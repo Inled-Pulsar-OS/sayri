@@ -28,7 +28,7 @@ except Exception:
     except Exception:
         AppIndicator = None
 
-from sayri import config, paths, sysinfo
+from sayri import config, paths
 
 Gtk.init(sys.argv)
 
@@ -113,32 +113,11 @@ def send_sock_command(cmd: str) -> bool:
         return False
 
 
-def send_daemon_command(cmd: str) -> bool:
-    """Talk to the daemon control socket (``sayri-daemon.sock``).
-
-    ``send_sock_command`` only reaches the desktop UI process, which may not be
-    running at all. Anything that must survive regardless of which front-end
-    happens to be open (Exit, killall) has to go through the daemon instead.
-    """
-    try:
-        from sayri import ipc
-        client = ipc.SayriClient()
-        try:
-            if not client.connect(timeout=1.5):
-                return False
-            client.request(cmd, timeout=3.0)
-            return True
-        finally:
-            client.close()
-    except Exception:
-        return False
-
-
 def _daemon_call(cmd: str, params: Optional[dict] = None, timeout: float = 3.0) -> bool:
-    """Send one command to the daemon, with parameters.
+    """Send one command to the daemon's control socket, with parameters.
 
-    send_daemon_command covers the argument-less cases; the ui_* and killall
-    commands need a payload, so they go through here.
+    ``sayri.sock`` only reaches whatever front-end happens to hold it; the
+    killall/ui_* commands need the daemon itself, so they go through here.
     """
     try:
         from sayri import ipc
@@ -293,7 +272,17 @@ class SayriIndicator:
         indicator goes with everything else, so this process has to go too.
         """
         def _run() -> None:
-            _daemon_call("killall", {"include_daemon": False}, 8.0)
+            answered = _daemon_call("killall", {"include_daemon": False}, 8.0)
+            if not answered:
+                # No daemon to orchestrate the kill: stop whatever we started
+                # ourselves and go, rather than leave the menu click dead.
+                for proc in (self._sayri_proc, self._settings_proc):
+                    if proc and proc.poll() is None:
+                        try:
+                            proc.terminate()
+                        except OSError:
+                            pass
+                os._exit(0)
             if self._sayri_proc and self._sayri_proc.poll() is None:
                 self._sayri_proc.terminate()
             if self._settings_proc and self._settings_proc.poll() is None:
@@ -302,27 +291,29 @@ class SayriIndicator:
         threading.Thread(target=_run, daemon=True).start()
 
     def _on_quit(self, _item=None) -> None:
-        # "Exit" has to mean "Sayri is gone", not "the tray icon is gone".
-        # The daemon owns the companion windows (its core.shutdown() stops
-        # every UI plugin), so ask it first through its own control socket:
-        # sayri.sock may belong to the desktop UI process instead of the
-        # daemon, and a double "quit" would shut the daemon down twice.
-        if send_daemon_command("quit"):
-            pass
-        elif not send_sock_command("quit"):
-            # No daemon and no UI process answered, so nobody would clean up
-            # the companions. Do it here rather than leave windows stranded.
-            try:
-                stopped = sysinfo.stop_ui_plugins()
-                if stopped:
-                    print(f"[Sayri] Stopped UI plugins: {', '.join(stopped)}")
-            except Exception as exc:
-                print(f"[Sayri] UI plugin shutdown notice: {exc}")
-        if self._sayri_proc and self._sayri_proc.poll() is None:
-            self._sayri_proc.terminate()
-        if self._settings_proc and self._settings_proc.poll() is None:
-            self._settings_proc.terminate()
-        Gtk.main_quit()
+        """Hide the UI and stay in the tray, ready to be toggled back.
+
+        "Exit" used to send ``quit`` to the daemon, which took Sayri — this
+        indicator included — all the way down. That is what "Terminate all
+        Sayri processes" is for. What the tray icon owes the user on "Exit"
+        is the window going away and nothing else: the daemon and this
+        indicator keep running, and a click on the tray brings Sayri back.
+        """
+        if self.ui_id:
+            # A companion has no "hide": its window is owned by the plugin,
+            # and the plugin stops this indicator on the way out. Stopping
+            # that one companion is the closest Exit gets for companions.
+            _daemon_call("killall", {"ui_id": self.ui_id}, 8.0)
+            Gtk.main_quit()
+            return
+        # sayri.sock is held by the desktop UI while it is up (it hides its
+        # own overlay) and by the daemon otherwise (which broadcasts "hide"
+        # to the connected front-ends). Either way this is a hide, never a
+        # quit, so nothing here may touch the daemon or this process.
+        if not send_sock_command("hide"):
+            # Nothing listening, so there is no UI to hide; the indicator
+            # still stays up, which is the whole point of this button.
+            print("[Sayri] Exit: no UI to hide; the tray icon stays")
 
 
 def main(argv: Optional[list] = None) -> None:

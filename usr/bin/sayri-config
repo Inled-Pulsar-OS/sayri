@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Sayri Configuration CLI.
+
+Allows privileged agents (LEVEL_3/LEVEL_4) to read and write Sayri settings.
+This is the self-configuration entry point for system configuration.
+
+Usage:
+    sayri-config list
+    sayri-config get <group.key>
+    sayri-config set <group.key> <value>
+"""
+import os
+import sys
+
+real_script = os.path.realpath(__file__)
+lib = os.path.normpath(os.path.join(os.path.dirname(real_script), "..", "share", "sayri", "lib"))
+if os.path.isdir(lib) and lib not in sys.path:
+    sys.path.insert(0, lib)
+
+from sayri import config
+
+
+_SECRET_KEY_HINTS = ("api_key", "apikey", "token", "secret", "password", "passwd", "credential")
+
+
+def _is_secret_key(key: str) -> bool:
+    lowered = str(key).lower()
+    return any(hint in lowered for hint in _SECRET_KEY_HINTS)
+
+
+def cmd_list(args):
+    for g in config.DEFAULTS:
+        for k in config.DEFAULTS[g]:
+            val = config.config.get(g, k)
+            if _is_secret_key(k) and isinstance(val, str) and val:
+                val = "***"
+            print(f"{g}.{k} = {val}")
+    return 0
+
+
+def cmd_get(args):
+    if not args:
+        print("Usage: sayri-config get <group.key>", file=sys.stderr)
+        return 1
+    path = args[0]
+    if "." in path:
+        group, key = path.split(".", 1)
+    else:
+        print("Error: key must be group.key", file=sys.stderr)
+        return 1
+    if group not in config.DEFAULTS or key not in config.DEFAULTS[group]:
+        print(f"Error: unknown setting {group}.{key}", file=sys.stderr)
+        return 1
+    val = config.config.get(group, key)
+    if _is_secret_key(key) and isinstance(val, str) and val:
+        val = "***"
+    print(f"{group}.{key} = {val}")
+    return 0
+
+
+def cmd_set(args):
+    if len(args) < 2:
+        print("Usage: sayri-config set <group.key> <value>", file=sys.stderr)
+        return 1
+    path = args[0]
+    value = args[1]
+    if "." in path:
+        group, key = path.split(".", 1)
+    else:
+        print("Error: key must be group.key", file=sys.stderr)
+        return 1
+    if group not in config.DEFAULTS or key not in config.DEFAULTS[group]:
+        print(f"Error: unknown setting {group}.{key}", file=sys.stderr)
+        return 1
+    gtype = config._TYPES[group].get(key, "string")
+    try:
+        if gtype == "bool":
+            config.config.set_bool(group, key, value.lower() in ("1", "true", "yes", "on"))
+        elif gtype in ("int", "double"):
+            num = float(value)
+            if gtype == "int":
+                num = int(num)
+            config.config.set(group, key, num)
+        else:
+            config.config.set_string(group, key, str(value))
+    except Exception as exc:
+        print(f"Error: could not set {group}.{key}={value!r}: {exc}", file=sys.stderr)
+        return 1
+    print(f"✓ Set {group}.{key} = {config.config.get(group, key)}")
+    return 0
+
+
+def main(argv=None):
+    args = argv if argv is not None else sys.argv[1:]
+    if not args:
+        print(__doc__)
+        return 0
+    sub = args[0]
+    rest = args[1:]
+    if sub == "list":
+        return cmd_list(rest)
+    elif sub == "get":
+        return cmd_get(rest)
+    elif sub == "set":
+        return cmd_set(rest)
+    else:
+        print(f"Unknown subcommand: {sub}", file=sys.stderr)
+        print(__doc__)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

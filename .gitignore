@@ -12,3 +12,7 @@ web/package-lock.json
 
 # Build output
 dist/
+
+# test scratch dirs
+tests/_xui_tmp/
+tests/_wizard_tmp/

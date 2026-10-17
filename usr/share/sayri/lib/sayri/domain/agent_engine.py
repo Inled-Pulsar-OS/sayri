@@ -131,6 +131,7 @@ class AgentEngine:
         skills_summary = ""
         is_level_0 = profile.sandbox.level == SandboxLevel.LEVEL_0_NO_EXEC
         is_read_only = profile.sandbox.level in (SandboxLevel.LEVEL_0_NO_EXEC, SandboxLevel.LEVEL_1_READONLY)
+        is_self_configurable = profile.sandbox.level in (SandboxLevel.LEVEL_3_HOST_USER, SandboxLevel.LEVEL_4_HOST_ROOT)
 
         if installed and not is_level_0:
             # Filter skills by profile.allowed_skills if specified
@@ -144,6 +145,20 @@ class AgentEngine:
             if filtered_skills:
                 items = [f"- {s['name']}: {s['description']}" for s in filtered_skills[:15]]
                 skills_summary = "\nAUTHORIZED SKILLS (read details with the 'read_skill' tool):\n" + "\n".join(items)
+
+        # Self-configuration capabilities (only for LEVEL_3/LEVEL_4 agents)
+        self_config_section = ""
+        if is_self_configurable:
+            self_config_section = (
+                "\nSELF-CONFIGURATION (you are running at a privileged level; you may configure Sayri):\n"
+                "- Create/update agent profiles: emit `sayri-agents create <json>` or `sayri-agents save <json>`\n"
+                "- Create/update gateway instances: emit `sayri-gateway save <json>` and `sayri-gateway start <id>`\n"
+                "- Update settings: emit `sayri-config set <group.key> <value>`\n"
+                "- Install skills: emit `sayri-skills install <slug>`\n"
+                "- Create a Discord memory gateway: use `sayri-gateway save` with plugin_id `sayri-discord-memory-gateway`\n"
+                "  Example: `sayri-gateway save {\"id\":\"my-discord\",\"plugin_id\":\"sayri-discord-memory-gateway\",\"agent_id\":\"default\",\"sandbox_level\":\"LEVEL_1_READONLY\",\"secret_key\":\"DISCORD_BOT_TOKEN\"}`\n"
+                "IMPORTANT: Only perform these actions when the user explicitly asks. Never self-modify without permission.\n"
+            )
 
         # Sandbox / Execution context (clear & grounded so small models don't hallucinate sandbox isolation)
         if is_level_0:
@@ -240,6 +255,7 @@ class AgentEngine:
             f"{custom_instr}\n"
             f"SANDBOX AND EXECUTION POLICY:\n{execution_policy}\n\n"
             f"{tool_policy}\n"
+            f"{self_config_section}"
             "YOUR CAPABILITIES IN PULSAR OS:\n"
             "1. System Orchestration: You can read files, open applications and run tools within your security limits.\n"
             "2. Sub-Agent Creation and Management: You can create sub-agents configured with different models and sandbox levels.\n"

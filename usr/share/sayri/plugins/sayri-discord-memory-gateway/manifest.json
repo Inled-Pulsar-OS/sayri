@@ -1,0 +1,19 @@
+{
+  "id": "sayri-discord-memory-gateway",
+  "name": "Sayri Discord Memory Gateway",
+  "type": "gateway",
+  "version": "1.0.0",
+  "description": "Discord channel gateway that listens to every message, detects tasks/proposals and writes them to memory markdown files. Routes messages to the bound Sayri agent.",
+  "author": "Inled Pulsar OS",
+  "entrypoint": "gateway.py",
+  "authorization": {
+    "mode": "pairing_otp"
+  },
+  "required_secrets": [
+    "DISCORD_BOT_TOKEN"
+  ],
+  "ui": {
+    "chat_url": "https://discord.com/channels/@me",
+    "sync_instructions": "Add this bot to your Discord server and configure which channels to monitor."
+  }
+}

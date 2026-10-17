@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Sayri Gateway Instance Management CLI.
+
+Allows privileged agents (LEVEL_3/LEVEL_4) to create, update, start, stop and
+delete gateway instances (Discord, Telegram, etc.). This is the self-configuration
+entry point for channel integrations.
+
+Usage:
+    sayri-gateway list
+    sayri-gateway save <json-file|json-string>
+    sayri-gateway start <id>
+    sayri-gateway stop <id>
+    sayri-gateway delete <id>
+    sayri-gateway pin <id>
+"""
+import json
+import os
+import sys
+
+real_script = os.path.realpath(__file__)
+lib = os.path.normpath(os.path.join(os.path.dirname(real_script), "..", "share", "sayri", "lib"))
+if os.path.isdir(lib) and lib not in sys.path:
+    sys.path.insert(0, lib)
+
+from sayri.gateway_supervisor import gateway_supervisor
+
+
+def cmd_list(args):
+    instances = gateway_supervisor.list_instances()
+    for inst in instances:
+        running = gateway_supervisor.is_instance_running(inst["id"])
+        print(f"{inst['id']}\t{inst.get('name', inst['id'])}\t{inst.get('plugin_id', '')}\t{inst.get('agent_id', 'default')}\t{inst.get('sandbox_level', 'LEVEL_1_READONLY')}\trunning={running}")
+    return 0
+
+
+def cmd_save(args):
+    if not args:
+        print("Usage: sayri-gateway save <json-file|json-string>", file=sys.stderr)
+        return 1
+    raw = args[0]
+    if os.path.isfile(raw):
+        with open(raw, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = json.loads(raw)
+    inst_id = data.get("id", "")
+    if not inst_id:
+        print("Error: instance 'id' is required", file=sys.stderr)
+        return 1
+    gateway_supervisor.save_instance(data)
+    print(f"✓ Gateway instance '{inst_id}' saved")
+    return 0
+
+
+def cmd_start(args):
+    if not args:
+        print("Usage: sayri-gateway start <id>", file=sys.stderr)
+        return 1
+    inst_id = args[0]
+    ok, msg = gateway_supervisor.start_instance(inst_id)
+    if ok:
+        print(f"✓ {msg}")
+    else:
+        print(f"✗ {msg}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_stop(args):
+    if not args:
+        print("Usage: sayri-gateway stop <id>", file=sys.stderr)
+        return 1
+    inst_id = args[0]
+    gateway_supervisor.stop_instance(inst_id)
+    print(f"✓ Gateway instance '{inst_id}' stopped")
+    return 0
+
+
+def cmd_delete(args):
+    if not args:
+        print("Usage: sayri-gateway delete <id>", file=sys.stderr)
+        return 1
+    inst_id = args[0]
+    gateway_supervisor.delete_instance(inst_id)
+    print(f"✓ Gateway instance '{inst_id}' deleted")
+    return 0
+
+
+def cmd_pin(args):
+    if not args:
+        print("Usage: sayri-gateway pin <id>", file=sys.stderr)
+        return 1
+    inst_id = args[0]
+    from sayri import paths
+    pin_file = os.path.join(paths.config_dir(), f"pairing_pin_{inst_id}.json")
+    if os.path.isfile(pin_file):
+        with open(pin_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        print(f"PIN for '{inst_id}': {data.get('pin', 'N/A')}")
+    else:
+        print(f"No active PIN for '{inst_id}'", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv=None):
+    args = argv if argv is not None else sys.argv[1:]
+    if not args:
+        print(__doc__)
+        return 0
+    sub = args[0]
+    rest = args[1:]
+    if sub == "list":
+        return cmd_list(rest)
+    elif sub == "save":
+        return cmd_save(rest)
+    elif sub == "start":
+        return cmd_start(rest)
+    elif sub == "stop":
+        return cmd_stop(rest)
+    elif sub == "delete":
+        return cmd_delete(rest)
+    elif sub == "pin":
+        return cmd_pin(rest)
+    else:
+        print(f"Unknown subcommand: {sub}", file=sys.stderr)
+        print(__doc__)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

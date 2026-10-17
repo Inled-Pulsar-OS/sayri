@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Sayri Agent Management CLI.
+
+Allows privileged agents (LEVEL_3/LEVEL_4) to create, update, delete and list
+agent profiles. This is the self-configuration entry point.
+
+Usage:
+    sayri-agents list
+    sayri-agents get <id>
+    sayri-agents create <json-file>
+    sayri-agents save <json-file>
+    sayri-agents delete <id>
+    sayri-agents json <json-string>
+"""
+import json
+import os
+import sys
+
+# Resolve real path of script in case it was invoked through a symlink
+real_script = os.path.realpath(__file__)
+lib = os.path.normpath(os.path.join(os.path.dirname(real_script), "..", "share", "sayri", "lib"))
+if os.path.isdir(lib) and lib not in sys.path:
+    sys.path.insert(0, lib)
+
+from sayri.domain.agent_creator import AgentCreator
+from sayri.domain.models import (
+    AgentProfile,
+    AgentModelConfig,
+    SandboxConfig,
+    SandboxLevel,
+)
+
+
+def _profile_from_dict(data: dict) -> AgentProfile:
+    sandbox_data = data.get("sandbox", {})
+    level_str = sandbox_data.get("level", "LEVEL_3_HOST_USER")
+    try:
+        level = SandboxLevel(level_str)
+    except ValueError:
+        level = SandboxLevel.LEVEL_3_HOST_USER
+
+    model_data = data.get("model", {})
+    profile = AgentProfile(
+        id=data.get("id", ""),
+        name=data.get("name", "New Agent"),
+        description=data.get("description", ""),
+        system_prompt=data.get("system_prompt", ""),
+        model=AgentModelConfig(
+            provider=model_data.get("provider", "default"),
+            model_name=model_data.get("model_name", "default"),
+            temperature=float(model_data.get("temperature", 0.7)),
+            max_tokens=model_data.get("max_tokens"),
+        ),
+        sandbox=SandboxConfig(
+            level=level,
+            timeout_seconds=int(sandbox_data.get("timeout_seconds", 10)),
+            allow_network=bool(sandbox_data.get("allow_network", True)),
+            allowed_binaries=list(sandbox_data.get("allowed_binaries", [])),
+            blocked_binaries=list(sandbox_data.get("blocked_binaries", ["mkfs", "dd", "shutdown", "reboot"])),
+            permission_rules=list(sandbox_data.get("permission_rules", [])),
+            ask_before_run=bool(sandbox_data.get("ask_before_run", False)),
+        ),
+        allowed_skills=list(data.get("allowed_skills", [])),
+        allowed_plugins=list(data.get("allowed_plugins", [])),
+        allowed_tools=list(data.get("allowed_tools", [])),
+        custom_instructions=data.get("custom_instructions", ""),
+        investigation_loop=bool(data.get("investigation_loop", False)),
+        reinforcement_learning=bool(data.get("reinforcement_learning", False)),
+    )
+    return profile
+
+
+def cmd_list(args):
+    agents = AgentCreator.list_agents()
+    for a in agents:
+        print(f"{a.id}\t{a.name}\t{a.sandbox.level.value}\tbuiltin={a.is_builtin}")
+    return 0
+
+
+def cmd_get(args):
+    agent_id = args[0]
+    agent = AgentCreator.get_agent(agent_id)
+    if not agent:
+        print(f"Agent '{agent_id}' not found", file=sys.stderr)
+        return 1
+    print(json.dumps({
+        "id": agent.id,
+        "name": agent.name,
+        "description": agent.description,
+        "system_prompt": agent.system_prompt,
+        "model": {
+            "provider": agent.model.provider,
+            "model_name": agent.model.model_name,
+            "temperature": agent.model.temperature,
+            "max_tokens": agent.model.max_tokens,
+        },
+        "sandbox": {
+            "level": agent.sandbox.level.value,
+            "timeout_seconds": agent.sandbox.timeout_seconds,
+            "allow_network": agent.sandbox.allow_network,
+            "allowed_binaries": agent.sandbox.allowed_binaries,
+            "blocked_binaries": agent.sandbox.blocked_binaries,
+            "permission_rules": agent.sandbox.permission_rules,
+            "ask_before_run": agent.sandbox.ask_before_run,
+        },
+        "allowed_skills": agent.allowed_skills,
+        "allowed_plugins": getattr(agent, "allowed_plugins", []),
+        "allowed_tools": agent.allowed_tools,
+        "custom_instructions": agent.custom_instructions,
+        "investigation_loop": agent.investigation_loop,
+        "reinforcement_learning": agent.reinforcement_learning,
+    }, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_create(args):
+    if not args:
+        print("Usage: sayri-agents create <json-file|json-string>", file=sys.stderr)
+        return 1
+    raw = args[0]
+    if os.path.isfile(raw):
+        with open(raw, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = json.loads(raw)
+    profile = _profile_from_dict(data)
+    path = AgentCreator.save_agent(profile)
+    print(f"✓ Agent '{profile.name}' saved to {path}")
+    return 0
+
+
+def cmd_save(args):
+    return cmd_create(args)
+
+
+def cmd_delete(args):
+    if not args:
+        print("Usage: sayri-agents delete <id>", file=sys.stderr)
+        return 1
+    agent_id = args[0]
+    agent = AgentCreator.get_agent(agent_id)
+    if agent is not None and agent.is_builtin:
+        print(f"Cannot delete built-in agent '{agent_id}'", file=sys.stderr)
+        return 1
+    ok = AgentCreator.delete_agent(agent_id)
+    if ok:
+        print(f"✓ Agent '{agent_id}' deleted")
+    else:
+        print(f"✗ Agent '{agent_id}' not found or could not be deleted", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv=None):
+    args = argv if argv is not None else sys.argv[1:]
+    if not args:
+        print(__doc__)
+        return 0
+    sub = args[0]
+    rest = args[1:]
+    if sub == "list":
+        return cmd_list(rest)
+    elif sub == "get":
+        return cmd_get(rest)
+    elif sub in ("create", "save"):
+        return cmd_create(rest)
+    elif sub == "delete":
+        return cmd_delete(rest)
+    elif sub == "json":
+        return cmd_create(rest)
+    else:
+        print(f"Unknown subcommand: {sub}", file=sys.stderr)
+        print(__doc__)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

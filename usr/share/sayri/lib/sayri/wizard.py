@@ -45,16 +45,21 @@ LANGUAGES: list[dict] = [
 ]
 
 PROVIDERS: list[dict] = [
+    {"value": "openrouter", "label": "OpenRouter (Free Model Router)",
+     "base_url": "https://openrouter.ai/api/v1", "model": "openrouter/free", "key": True,
+     "key_url": "https://openrouter.ai/keys"},
+    {"value": "groq", "label": "Groq (Fast & Free tier)",
+     "base_url": "https://api.groq.com/openai/v1", "model": "llama-3.3-70b-versatile", "key": True,
+     "key_url": "https://console.groq.com/keys"},
     {"value": "ollama", "label": "Ollama (local, recommended)",
-     "base_url": "http://127.0.0.1:11434/v1", "model": "llama3.2", "key": False},
+     "base_url": "http://127.0.0.1:11434/v1", "model": "llama3.2", "key": False,
+     "key_url": ""},
     {"value": "openai", "label": "OpenAI",
-     "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "key": True},
-    {"value": "groq", "label": "Groq (fast & free)",
-     "base_url": "https://api.groq.com/openai/v1", "model": "llama-3.3-70b-versatile", "key": True},
-    {"value": "openrouter", "label": "OpenRouter",
-     "base_url": "https://openrouter.ai/api/v1", "model": "openai/gpt-4o-mini", "key": True},
+     "base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "key": True,
+     "key_url": "https://platform.openai.com/api-keys"},
     {"value": "custom", "label": "Other (OpenAI-compatible)",
-     "base_url": "", "model": "", "key": False},
+     "base_url": "", "model": "", "key": False,
+     "key_url": ""},
 ]
 
 WHISPER_SIZES: list[dict] = [
@@ -107,12 +112,12 @@ class WelcomeApp:
             "download_voice": True,
             "stt_size": "base",
             "download_stt": False,
-            "provider": "ollama",
+            "provider": "openrouter",
             "prism_family": "ternary",
             "prism_quant": "",
             "prism_size": "8B",
-            "base_url": "http://127.0.0.1:11434/v1",
-            "model": "llama3.2",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model": "openrouter/free",
             "api_key": "",
         }
         self.idx = 0
@@ -176,10 +181,10 @@ class WelcomeApp:
             ],
             subtitle="One-minute setup",
             footer=[
-                button("start", "Start", kind="primary"),
                 button("skip", "Skip", kind="secondary"),
+                button("start", "Start", kind="primary"),
             ],
-            id="welcome", step=self._step_label(7),
+            id="welcome", step="",
         )
 
     def _language_screen(self) -> dict:
@@ -199,7 +204,7 @@ class WelcomeApp:
         return screen(
             "Connect an AI provider",
             [
-                _select("provider", "Provider", opts, default=self.val.get("provider", "ollama")),
+                _select("provider", "Provider", opts, default=self.val.get("provider", "openrouter")),
                 note("Sayri calls any OpenAI-compatible API. Ollama is local, free and private.", "info"),
             ],
             footer=[button("back", "Back"), button("next", "Next", kind="primary")],
@@ -225,7 +230,7 @@ class WelcomeApp:
         return {}
 
     def _provider_details_screen(self) -> dict:
-        prov = self._provider_info(self.val.get("provider", "ollama"))
+        prov = self._provider_info(self.val.get("provider", "openrouter"))
         if self._is_prism():
             fill = self._prism_autofill()
             base_url_default = fill.get("base_url") or self.val.get("base_url") or prov["base_url"]
@@ -242,14 +247,35 @@ class WelcomeApp:
                 f"Prism ML runs locally — pre-filled with your configured model ({self.val.get('prism_family', 'ternary')}/"
                 f"{self.val.get('prism_size', '8B')}) and server ({base_url_default}). Leave the API key empty.", "info"))
         else:
-            body = [
+            body = []
+            prov_val = self.val.get("provider", "")
+            key_url = prov.get("key_url", "")
+            if prov_val == "openrouter":
+                body.append(note(
+                    "OpenRouter is preconfigured with the Free Model Router (openrouter/free). "
+                    "Simply paste your API key below.", "info"))
+            elif prov_val == "groq":
+                body.append(note(
+                    "Groq is preconfigured with the fast free-tier model (llama-3.3-70b-versatile). "
+                    "Simply paste your API key below.", "info"))
+            elif prov_val == "ollama":
+                body.append(note(
+                    "Ollama runs locally on your machine without requiring an API key.", "info"))
+            elif prov_val == "openai":
+                body.append(note(
+                    "OpenAI is preconfigured with gpt-4o-mini. Paste your OpenAI API key below.", "info"))
+
+            body.extend([
                 entry("base_url", "Base URL", default=self.val.get("base_url") or prov["base_url"],
                       placeholder="http://127.0.0.1:11434/v1", hint="OpenAI-compatible endpoint (…/v1)"),
                 entry("model", "Model", default=self.val.get("model") or prov.get("model", ""),
                       placeholder="llama3.2"),
-                entry("api_key", "API Key (optional)", default=self.val.get("api_key", ""),
+                entry("api_key", "API Key", default=self.val.get("api_key", ""),
                       secret=True, hint="Leave empty for Ollama / local servers."),
-            ]
+            ])
+            if key_url:
+                body.append(button("get_api_key", f"Get {prov.get('label', 'API')} Key ↗", kind="secondary"))
+
         return screen(
             "Provider details",
             body,
@@ -618,6 +644,19 @@ class WelcomeApp:
             if self.idx < target:
                 self.idx = target
             return self.render()
+        if wid in ("get_api_key", "open_key_url"):
+            prov = self._provider_info(self.val.get("provider", ""))
+            url = prov.get("key_url")
+            if url:
+                try:
+                    subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    try:
+                        import webbrowser
+                        webbrowser.open(url)
+                    except Exception:
+                        pass
+            return self.render()
         if wid in ("close", "quit"):
             return None
         if wid == "launch":
@@ -645,10 +684,8 @@ class WelcomeApp:
         if self.idx == 2:  # provider
             self.val.update(value)
             p = self._provider_info(self.val.get("provider", ""))
-            if not self.val.get("base_url"):
-                self.val["base_url"] = p["base_url"]
-            if not self.val.get("model"):
-                self.val["model"] = p["model"]
+            self.val["base_url"] = p["base_url"]
+            self.val["model"] = p["model"]
             self.idx = 3
             return self.render()
         if self.idx == 3:  # prism family (Prism) / provider details

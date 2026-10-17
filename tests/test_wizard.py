@@ -18,13 +18,13 @@ from sayri import xui  # noqa: E402
 def test_wizard_defaults():
     app = wizard.WelcomeApp()
     assert app.idx == 0
-    assert app.val["provider"] == "ollama"
+    assert app.val["provider"] == "openrouter"
     assert app.val["voice"] == ""
     assert app.val["stt_size"] == "base"
     assert app.task.running is False
     scr = app.render()
     assert scr["id"] == "welcome"
-    assert scr["step"] == "7/7"
+    assert scr["step"] == ""
     labels = {b["id"] for b in scr["footer"]}
     assert labels == {"start", "skip"}
 
@@ -35,7 +35,8 @@ def test_module_constant_shapes():
         assert opt["value"] and opt["label"]
     for p in wizard.PROVIDERS:
         assert p["value"] and p["label"] and "base_url" in p and "model" in p
-    assert wizard.PROVIDERS[0]["value"] == "ollama"
+        assert "key_url" in p
+    assert wizard.PROVIDERS[0]["value"] == "openrouter"
     for s in wizard.WHISPER_SIZES:
         assert s["value"] and s["label"]
 

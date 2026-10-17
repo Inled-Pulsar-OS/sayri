@@ -825,16 +825,18 @@ _HTML_PAGE = """<!DOCTYPE html>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: rgba(10,12,18,0.96);
+  html, body { margin: 0; padding: 0; height: 100%; background: rgba(10,12,18,0.96);
                color: #e6ebf2; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 40px; }
-  header { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: 14px; }
+  .wrap { max-width: 720px; min-height: 100vh; margin: 0 auto; padding: 28px 24px 28px;
+          display: flex; flex-direction: column; box-sizing: border-box; }
+  header { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid rgba(255,255,255,.08);
+           padding-bottom: 14px; flex: 0 0 auto; }
   .logo { font-weight: 800; letter-spacing: .04em; background: linear-gradient(90deg,#22c55e,#38bdf8);
           -webkit-background-clip: text; background-clip: text; color: transparent; }
   header h1 { font-size: 22px; margin: 0; }
   .step { margin-left: auto; color: #7bd8f0; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .subtitle { color: #94a3b8; margin: 8px 0 18px; }
-  .body { display: flex; flex-direction: column; gap: 12px; }
+  .subtitle { color: #94a3b8; margin: 8px 0 18px; flex: 0 0 auto; }
+  .body { display: flex; flex-direction: column; gap: 12px; flex: 1 0 auto; }
   .row.text { font-size: 15px; }
   .row.text.dim { color: #94a3b8; }
   .row.text.accent { font-weight: 700; }
@@ -871,7 +873,8 @@ _HTML_PAGE = """<!DOCTYPE html>
   @keyframes slide { from { margin-left:-40%; } to { margin-left:100%; } }
   .plabel { font-size:12.5px; color:#94a3b8; margin-bottom:4px; }
   .progtext { font-size:14px; margin-top:8px; white-space:pre-wrap; color:#cbd5e1; max-height:140px; overflow:auto; }
-  .footer { display:flex; gap:10px; justify-content:flex-end; margin-top:24px; }
+  .footer { display:flex; gap:10px; justify-content:flex-end; margin-top:auto; padding-top:24px;
+            border-top: 1px solid rgba(255,255,255,.08); flex: 0 0 auto; }
   button { font:inherit; border-radius:10px; padding:9px 18px; cursor:pointer; border:1px solid rgba(255,255,255,.14);
            background:#16213a; color:#e6ebf2; }
   button.primary { background:linear-gradient(90deg,#22c55e,#16a34a); border-color:transparent; font-weight:700; color:#04120a; }
@@ -959,6 +962,27 @@ _HTML_PAGE = """<!DOCTYPE html>
         pollTimer = setInterval(function () { post({ type: "poll" }); }, 900);
       }
 
+      // Seed and sync initial field state before rendering widgets
+      (src.body || []).concat(src.footer || []).forEach(function (n) {
+        var t = n.t;
+        if (t === "entry") {
+          if (n.default !== undefined && n.default !== null && n.default !== "") {
+            state[n.id] = n.default;
+          } else if (!(n.id in state)) {
+            state[n.id] = "";
+          }
+        }
+        if (t === "check") {
+          if (!(n.id in state)) state[n.id] = !!n.default;
+        }
+        if (t === "select") {
+          var optSel = (n.options || []).filter(function (o) { return o.value === n.default; });
+          if (!(n.id in state) || (n.default && optSel.length)) {
+            state[n.id] = (optSel.length ? n.default : (n.options || [])[0] && n.options[0].value);
+          }
+        }
+      });
+
       var body = document.getElementById("body");
       body.innerHTML = "";
       (src.body || []).forEach(function (node) { body.appendChild(renderNode(src, node)); });
@@ -970,17 +994,6 @@ _HTML_PAGE = """<!DOCTYPE html>
         return;
       }
       (src.footer || []).forEach(function (b) { foot.appendChild(buttonNode(b)); });
-
-      // seed initial field state
-      (src.body || []).concat(src.footer || []).forEach(function (n) {
-        var t = n.t;
-        if (t === "entry" && !(n.id in state)) state[n.id] = n.default || "";
-        if (t === "check" && !(n.id in state)) state[n.id] = !!n.default;
-        if (t === "select") {
-          var optSel = (n.options || []).filter(function (o) { return o.value === n.default; });
-          if (!(n.id in state)) state[n.id] = (optSel.length ? n.default : (n.options || [])[0] && n.options[0].value);
-        }
-      });
     },
 
     setBusy: function (b) {
@@ -1019,7 +1032,9 @@ _HTML_PAGE = """<!DOCTYPE html>
       var inp = document.createElement("input");
       inp.type = node.secret ? "password" : "text";
       inp.placeholder = node.placeholder || "";
-      inp.value = state[node.id] || "";
+      var val = (state[node.id] !== undefined && state[node.id] !== null) ? state[node.id] : (node.default || "");
+      inp.value = val;
+      state[node.id] = val;
       inp.addEventListener("input", function () { state[node.id] = inp.value; });
       inp.addEventListener("keydown", function (e) {
         if (e.key === "Enter") post({ type: "submit", value: collect() });
