@@ -2,7 +2,7 @@
   "id": "sayri-discord-memory-gateway",
   "name": "Sayri Discord Memory Gateway",
   "type": "gateway",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "jaimegh-es",
   "description": "Discord gateway that watches server conversations, detects tasks/proposals/questions and appends them to per-channel memory markdown files, and routes the paired owner's messages to a Sayri agent with per-channel conversation threads.",
   "entrypoint": "gateway.py",

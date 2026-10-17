@@ -57,6 +57,11 @@ except ImportError:
 
 from sayri import paths
 
+# Every file this gateway writes (memory, auth, failures) is private by
+# creation, not by a later chmod that can be skipped. Set before any
+# module-level mkdir/writes below.
+os.umask(0o077)
+
 
 # ── authorization (desktop OTP pairing) ────────────────────────────
 
@@ -69,16 +74,60 @@ SHARED_PIN_FILE = Path(os.environ.get(
 
 
 class AuthorizationManager:
-    """Enforces desktop OTP pairing: only a paired owner may interact."""
+    """Enforces desktop OTP pairing: only a paired owner may interact.
+
+    Hardening notes for auditors:
+    - Failed attempts are persisted to disk, so a gateway restart does not
+      reset the brute-force lockout (5 failures / 10 minutes per user).
+    - The PIN and auth files are refused if they are readable by anyone but
+      the owner (mode checked on every read, not just on write).
+    - The PIN comparison is constant-time and the PIN must match the
+      ``\\d{6}`` shape before it is even compared, so malformed input can
+      never half-match.
+    """
+
+    MAX_FAILED_ATTEMPTS = 5
+    LOCKOUT_WINDOW = 600  # seconds
+    FAIL_FILE = Path(os.environ.get(
+        "SAYRI_AUTH_FILE",
+        os.path.join(paths.config_dir(), "authorizations_discord_memory.json")
+    ).replace("authorizations_", "auth_failures_"))
 
     def __init__(self) -> None:
         self.auth_file = AUTH_FILE
         self.whitelisted_users: set[str] = set()
-        self._failed_attempts: dict[str, tuple[int, float]] = {}
+        self._failed_attempts: dict[str, tuple[int, float]] = self._load_failures()
         self._load()
 
+    @staticmethod
+    def _file_is_private(path: Path) -> bool:
+        """True when the file exists with no group/other permissions."""
+        try:
+            mode = path.stat().st_mode & 0o077
+        except OSError:
+            return False
+        return mode == 0
+
+    def _load_failures(self) -> dict[str, tuple[int, float]]:
+        try:
+            if self.FAIL_FILE.is_file() and self._file_is_private(self.FAIL_FILE):
+                data = json.loads(self.FAIL_FILE.read_text(encoding="utf-8"))
+                return {str(k): (int(v[0]), float(v[1])) for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
+    def _save_failures(self) -> None:
+        try:
+            self.FAIL_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self.FAIL_FILE.write_text(
+                json.dumps(self._failed_attempts), encoding="utf-8")
+            os.chmod(self.FAIL_FILE, 0o600)
+        except OSError:
+            pass
+
     def _load(self) -> None:
-        if self.auth_file.is_file():
+        if self.auth_file.is_file() and self._file_is_private(self.auth_file):
             try:
                 data = json.loads(self.auth_file.read_text(encoding="utf-8"))
                 self.whitelisted_users = {
@@ -117,48 +166,62 @@ class AuthorizationManager:
                            username: Optional[str] = None) -> Tuple[bool, str]:
         now = time.time()
         fail_count, last_fail = self._failed_attempts.get(str(user_id), (0, 0.0))
-        if now - last_fail > 600:
+        if now - last_fail > self.LOCKOUT_WINDOW:
             fail_count = 0
-        if fail_count >= 5:
-            cooldown_left = int(600 - (now - last_fail))
+        if fail_count >= self.MAX_FAILED_ATTEMPTS:
+            cooldown_left = int(self.LOCKOUT_WINDOW - (now - last_fail))
             return False, (f"Too many failed attempts. "
                            f"Please wait {cooldown_left} seconds before trying again.")
 
         clean_pin = pin.replace(" ", "").replace("-", "").strip()
-        if not clean_pin:
-            return False, "PIN code is empty."
+        # Shape gate: the desktop PIN is exactly 6 digits, so anything else
+        # is rejected before it ever reaches the comparison.
+        if not (clean_pin.isdigit() and len(clean_pin) == 6):
+            return False, "PIN code must be the 6-digit PIN shown on the desktop."
 
-        if SHARED_PIN_FILE.is_file():
-            try:
-                data = json.loads(SHARED_PIN_FILE.read_text(encoding="utf-8"))
-                file_pin = str(data.get("pin", "")).replace(" ", "").replace("-", "").strip()
-                expires_at = data.get("expires_at", float("inf"))
-                if hmac.compare_digest(clean_pin, file_pin) and now <= expires_at:
-                    self.whitelisted_users.add(str(user_id).lower())
-                    if username:
-                        self.whitelisted_users.add(username.lower())
-                    self._save()
-                    self._failed_attempts.pop(str(user_id), None)
-                    # Rotate the PIN so it cannot be replayed.
-                    try:
-                        SHARED_PIN_FILE.write_text(json.dumps({
-                            "pin": f"{random.randint(100000, 999999)}",
-                            "created_at": time.time(),
-                            "expires_at": time.time() + 86400,
-                        }, indent=2), encoding="utf-8")
-                        os.chmod(SHARED_PIN_FILE, 0o600)
-                    except OSError:
-                        pass
-                    return True, ("Pairing completed successfully! Your Discord "
-                                  "account is now the owner of this Sayri gateway.")
-            except Exception as exc:
-                print(f"[Auth] Error checking pin file: {exc}", file=sys.stderr)
-        else:
+        def _fail() -> Tuple[bool, str]:
+            self._failed_attempts[str(user_id)] = (fail_count + 1, now)
+            self._save_failures()
+            remaining = self.MAX_FAILED_ATTEMPTS - (fail_count + 1)
+            return False, f"Incorrect or expired PIN. Remaining attempts: {max(0, remaining)}"
+
+        if not SHARED_PIN_FILE.is_file():
             print(f"[Auth] PIN file not found at {SHARED_PIN_FILE}")
+            return _fail()
+        if not self._file_is_private(SHARED_PIN_FILE):
+            # A world-readable PIN file is a hosting mistake, not a PIN.
+            print(f"[Auth] Refusing world-readable PIN file {SHARED_PIN_FILE}")
+            return _fail()
 
-        self._failed_attempts[str(user_id)] = (fail_count + 1, now)
-        remaining = 5 - (fail_count + 1)
-        return False, f"Incorrect or expired PIN. Remaining attempts: {max(0, remaining)}"
+        try:
+            data = json.loads(SHARED_PIN_FILE.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[Auth] Error checking pin file: {exc}", file=sys.stderr)
+            return _fail()
+
+        file_pin = str(data.get("pin", "")).replace(" ", "").replace("-", "").strip()
+        expires_at = data.get("expires_at", float("inf"))
+        if hmac.compare_digest(clean_pin, file_pin) and now <= expires_at:
+            self.whitelisted_users.add(str(user_id).lower())
+            if username:
+                self.whitelisted_users.add(username.lower())
+            self._save()
+            self._failed_attempts.pop(str(user_id), None)
+            self._save_failures()
+            # Rotate the PIN so it cannot be replayed.
+            try:
+                SHARED_PIN_FILE.write_text(json.dumps({
+                    "pin": f"{random.randint(100000, 999999)}",
+                    "created_at": time.time(),
+                    "expires_at": time.time() + 86400,
+                }, indent=2), encoding="utf-8")
+                os.chmod(SHARED_PIN_FILE, 0o600)
+            except OSError:
+                pass
+            return True, ("Pairing completed successfully! Your Discord "
+                          "account is now the owner of this Sayri gateway.")
+
+        return _fail()
 
 
 # ── memory file writer ──────────────────────────────────────────────
@@ -305,6 +368,8 @@ def main():
         print("DISCORD_BOT_TOKEN not set", file=sys.stderr)
         sys.exit(1)
 
+    # umask(0o077) was already applied at import time, before the module
+    # created its directories and files.
     intents = discord.Intents.default()
     intents.message_content = True
 
