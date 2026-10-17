@@ -1595,11 +1595,17 @@ def _list_ui_plugins() -> list[dict]:
 
 def _ui_plugin_gateway(ui_id: str) -> Optional[Path]:
     """Find a UI-type plugin gateway by id (user config dir first, then system)."""
+    target = ui_id.lower()
+    targets = {target}
+    if target in ("desktop", "default", "predeterminada"):
+        # "desktop" is how the built-in default UI has always been addressed;
+        # it ships as the orb & cajita plugin (same alias as is_default above).
+        targets.add("orb")
     for pl in _list_ui_plugins():
-        pid = pl["id"]
+        pid = pl["id"].lower()
         pname = pl["name"].lower()
-        target = ui_id.lower()
-        if pid.lower() == target or pid.lower() == f"sayri-ui-{target}" or pid.lower() == f"sayri-{target}" or pname == target:
+        if any(pid == t or pid == f"sayri-ui-{t}" or pid == f"sayri-{t}"
+               or pname == t for t in targets):
             return pl["entrypoint"]
     return None
 

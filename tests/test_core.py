@@ -37,12 +37,25 @@ class RecordingUI:
         raise AttributeError(name)
 
 
+class _FakeBroker:
+    """Stands in for the engine's PermissionBroker (used by interrupt())."""
+
+    def __init__(self):
+        self.cancelled = []
+
+    def cancel_session(self, session_id):
+        self.cancelled.append(session_id)
+
+
 class FakeEngine:
     """Replaces AgentEngine.process_query with a scripted background reply."""
 
     def __init__(self, reply="hola, esto es una prueba"):
         self.reply = reply
         self.calls = []
+        # The real engine always owns a broker (agent_engine.py) and
+        # SayriCore.interrupt() cancels the parked session through it.
+        self.broker = _FakeBroker()
 
     def process_query(self, session_id, user_text, profile, cfg,
                       on_delta, on_done, on_tool_start, on_tool_finish, on_error):
