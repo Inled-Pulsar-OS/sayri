@@ -3,17 +3,36 @@
   "name": "Sayri Discord Memory Gateway",
   "type": "gateway",
   "version": "1.0.0",
-  "description": "Discord channel gateway that listens to every message, detects tasks/proposals and writes them to memory markdown files. Routes messages to the bound Sayri agent.",
-  "author": "Inled Pulsar OS",
+  "author": "jaimegh-es",
+  "description": "Discord gateway that watches server conversations, detects tasks/proposals/questions and appends them to per-channel memory markdown files, and routes the paired owner's messages to a Sayri agent with per-channel conversation threads.",
   "entrypoint": "gateway.py",
-  "authorization": {
-    "mode": "pairing_otp"
-  },
+  "sandbox_level": "LEVEL_3_HOST_USER",
   "required_secrets": [
     "DISCORD_BOT_TOKEN"
   ],
+  "authorization": {
+    "mode": "pairing_otp",
+    "allowed_users": [],
+    "pairing_pin_required": true,
+    "pin_expiration_seconds": 86400,
+    "rate_limit": {
+      "max_requests_per_minute": 15,
+      "burst": 3
+    }
+  },
+  "capabilities": [
+    "receive_messages",
+    "send_replies",
+    "continuous_conversation",
+    "memory_capture",
+    "desktop_pairing_otp"
+  ],
+  "allowed_domains": [
+    "discord.com",
+    "gateway.discord.gg"
+  ],
   "ui": {
     "chat_url": "https://discord.com/channels/@me",
-    "sync_instructions": "Add this bot to your Discord server and configure which channels to monitor."
+    "sync_instructions": "1. Create an application at https://discord.com/developers/applications and copy the Bot Token.\n2. In the 'Bot' tab enable 'MESSAGE CONTENT INTENT'.\n3. Invite the bot with 'Send Messages', 'Read Message History' and 'View Channels' permissions.\n4. Save the token in the Sayri vault as DISCORD_BOT_TOKEN (Settings -> Gateways).\n5. In Discord, send `!pair <PIN>` with the PIN shown in the Sayri desktop UI to authorize your account.\n\nOnly the paired owner is routed to the agent and captured to memory; everyone else gets a single pairing hint."
   }
 }
