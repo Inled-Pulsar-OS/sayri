@@ -155,8 +155,9 @@ class AgentEngine:
                 "- Create/update gateway instances: emit `sayri-gateway save <json>` and `sayri-gateway start <id>`\n"
                 "- Update settings: emit `sayri-config set <group.key> <value>`\n"
                 "- Install skills: emit `sayri-skills install <slug>`\n"
-                "- Create a Discord memory gateway: use `sayri-gateway save` with plugin_id `sayri-discord-memory-gateway`\n"
-                "  Example: `sayri-gateway save {\"id\":\"my-discord\",\"plugin_id\":\"sayri-discord-memory-gateway\",\"agent_id\":\"default\",\"sandbox_level\":\"LEVEL_1_READONLY\",\"secret_key\":\"DISCORD_BOT_TOKEN\"}`\n"
+                "- Create a Discord gateway: use `sayri-gateway save` with plugin_id `sayri-gateway-discord`\n"
+                "  Example: `sayri-gateway save {\"id\":\"my-discord\",\"plugin_id\":\"sayri-gateway-discord\",\"agent_id\":\"default\",\"sandbox_level\":\"LEVEL_1_READONLY\",\"secret_key\":\"DISCORD_BOT_TOKEN\"}`\n"
+                "  (it includes the passive conversation memory journal, toggled in chat with /memory on|off)\n"
                 "IMPORTANT: Only perform these actions when the user explicitly asks. Never self-modify without permission.\n"
             )
 
