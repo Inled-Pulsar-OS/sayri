@@ -126,3 +126,43 @@ jobs:
             artifacts/**/*.rpm
             artifacts/**/*.pkg.tar.zst
             artifacts/**/*.flatpak
+
+      - name: Notify Inled Repo
+        if: env.INLED_REPO_PAT != ''
+        env:
+          INLED_REPO_PAT: ${{ secrets.INLED_REPO_PAT }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          DEB_FILE=$(basename $(ls artifacts/**/*.deb 2>/dev/null | head -n 1 || true))
+          RPM_FILE=$(basename $(ls artifacts/**/*.rpm 2>/dev/null | head -n 1 || true))
+          ARCH_FILE=$(basename $(ls artifacts/**/*.pkg.tar.* 2>/dev/null | head -n 1 || true))
+          
+          DEB_URL=""
+          RPM_URL=""
+          ARCH_URL=""
+          [ -n "$DEB_FILE" ] && DEB_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${DEB_FILE}"
+          [ -n "$RPM_FILE" ] && RPM_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${RPM_FILE}"
+          [ -n "$ARCH_FILE" ] && ARCH_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${ARCH_FILE}"
+          
+          echo "Dispatching package update to InledGroup/apt..."
+          echo "  Debian URL: ${DEB_URL}"
+          [ -n "$RPM_URL" ] && echo "  RPM URL:    ${RPM_URL}"
+          [ -n "$ARCH_URL" ] && echo "  Arch URL:   ${ARCH_URL}"
+          
+          PAYLOAD=$(jq -n \
+            --arg deb "$DEB_URL" \
+            --arg rpm "$RPM_URL" \
+            --arg arch "$ARCH_URL" \
+            '{
+              event_type: "package_upload",
+              client_payload: {
+                package_url: (if $deb != "" then $deb else null end),
+                rpm_url: (if $rpm != "" then $rpm else null end),
+                arch_url: (if $arch != "" then $arch else null end)
+              }
+            }')
+          
+          curl -f -X POST -H "Accept: application/vnd.github.v3+json" \
+               -H "Authorization: token ${INLED_REPO_PAT}" \
+               https://api.github.com/repos/InledGroup/apt/dispatches \
+               -d "$PAYLOAD"
