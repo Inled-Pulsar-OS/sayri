@@ -353,7 +353,6 @@ def install_piper(progress: Optional[Callable[[float], None]] = None) -> str:
         _extract_zip(archive, extract_dir)
     else:
         _extract_tar(archive, extract_dir)
-    dest = _local_binary("piper")
     espeak_dest = os.path.join(paths.bin_dir(), "espeak-ng-data")
     for root, dirs, files in os.walk(extract_dir):
         for f in files:
@@ -369,6 +368,7 @@ def install_piper(progress: Optional[Callable[[float], None]] = None) -> str:
             src_data = os.path.join(root, "espeak-ng-data")
             shutil.rmtree(espeak_dest, ignore_errors=True)
             shutil.copytree(src_data, espeak_dest)
-    if os.path.isfile(dest):
+    dest = _local_binary("piper")
+    if dest and os.path.isfile(dest):
         return dest
     raise DownloadError("piper binary not found inside the downloaded archive")

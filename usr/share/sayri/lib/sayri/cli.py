@@ -628,6 +628,8 @@ def _parse_level(raw: str) -> str:
         "0": "LEVEL_0_NO_EXEC", "1": "LEVEL_1_READONLY", "2": "LEVEL_2_ISOLATED_DEV",
         "3": "LEVEL_3_HOST_USER", "4": "LEVEL_4_HOST_ROOT",
         "no_exec": "LEVEL_0_NO_EXEC", "noexec": "LEVEL_0_NO_EXEC",
+        "restricted": "LEVEL_RESTRICTED_COMMANDS", "restricted_commands": "LEVEL_RESTRICTED_COMMANDS",
+        "commands": "LEVEL_RESTRICTED_COMMANDS", "allowlist": "LEVEL_RESTRICTED_COMMANDS",
         "readonly": "LEVEL_1_READONLY", "read_only": "LEVEL_1_READONLY",
         "isolated": "LEVEL_2_ISOLATED_DEV", "isolated_dev": "LEVEL_2_ISOLATED_DEV",
         "host": "LEVEL_3_HOST_USER", "host_user": "LEVEL_3_HOST_USER",
@@ -1076,14 +1078,15 @@ def cmd_gateway(pairs: dict, rest: list[str]) -> int:
         elif token and action == "edit":
             secrets_manager.set_secret(plugin_id.upper(), token, f"Token for {plugin_id}")
         secret_key = token or (inst.get("secret_key") if action == "edit" else required_secret)
-        lvl = pairs.get("level")
-        sandbox = _parse_level(lvl) if lvl else inst.get("sandbox_level", "LEVEL_1_READONLY") if action == "edit" else "LEVEL_1_READONLY"
+        target_agent = pairs.get("agent") or (inst.get("agent_id") if action == "edit" else "default")
+        bound_agent = AgentCreator.get_agent(target_agent)
+        sandbox = bound_agent.sandbox.level.value if bound_agent else (inst.get("sandbox_level", "LEVEL_1_READONLY") if action == "edit" else "LEVEL_1_READONLY")
         timeout = pairs.get("timeout")
         instance_data = {
             "id": iid,
             "name": pairs.get("name") or (inst.get("name") if action == "edit" else name),
             "plugin_id": plugin_id,
-            "agent_id": pairs.get("agent") or (inst.get("agent_id") if action == "edit" else "default"),
+            "agent_id": target_agent,
             "sandbox_level": sandbox,
             "secret_key": secret_key,
             "auth_mode": (inst.get("auth_mode") if action == "edit" else (pl.get("auth_mode") or "pairing_otp")),

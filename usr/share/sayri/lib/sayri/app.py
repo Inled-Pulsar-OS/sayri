@@ -239,6 +239,9 @@ class SayriApp(Gtk.Application):
     def _launch_indicator(self) -> None:
         if hasattr(self, "_indicator_proc") and self._indicator_proc and self._indicator_proc.poll() is None:
             return
+        from . import sysinfo
+        if sysinfo.is_indicator_running():
+            return
         try:
             env = dict(os.environ)
             lib_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -405,12 +408,25 @@ class SayriApp(Gtk.Application):
         if not agent_profile:
             agent_profile = self.active_agent or AgentCreator.get_agent("default")
 
-        # 2. Apply custom Sandbox Level override if specified
+        # 2. Enforce Agent Sandbox Level (sandbox is bound to the agent; remote messages cannot elevate)
         if sandbox_level:
             try:
-                agent_profile = copy.deepcopy(agent_profile)
                 lvl_enum = getattr(SandboxLevel, sandbox_level, None) or SandboxLevel(sandbox_level)
-                agent_profile.sandbox.level = lvl_enum
+                levels_order = [
+                    SandboxLevel.LEVEL_0_NO_EXEC,
+                    SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+                    SandboxLevel.LEVEL_1_READONLY,
+                    SandboxLevel.LEVEL_2_ISOLATED_DEV,
+                    SandboxLevel.LEVEL_3_HOST_USER,
+                    SandboxLevel.LEVEL_4_HOST_ROOT,
+                ]
+                agent_idx = levels_order.index(agent_profile.sandbox.level) if agent_profile.sandbox.level in levels_order else 4
+                req_idx = levels_order.index(lvl_enum) if lvl_enum in levels_order else 4
+                if req_idx < agent_idx:
+                    agent_profile = copy.deepcopy(agent_profile)
+                    agent_profile.sandbox.level = lvl_enum
+                elif req_idx > agent_idx:
+                    print(f"[Sayri Security] Blocked remote sandbox elevation attempt: {agent_profile.sandbox.level.value} -> {lvl_enum.value}")
             except Exception as exc:
                 print(f"[Sayri Remote] Could not set custom sandbox level {sandbox_level}: {exc}")
 
@@ -1229,6 +1245,8 @@ def main() -> int:
             cmd = b"settings"
         elif is_quit:
             cmd = b"quit"
+        elif is_toggle:
+            cmd = b"toggle"
         else:
             cmd = None
         if cmd is not None:

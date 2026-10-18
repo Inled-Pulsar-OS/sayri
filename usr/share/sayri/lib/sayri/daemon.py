@@ -120,6 +120,8 @@ def _agent_to_dict(a: Any) -> dict:
         },
         "allowed_skills": list(getattr(a, "allowed_skills", []) or []),
         "allowed_tools": list(getattr(a, "allowed_tools", []) or []),
+        "allowed_commands": list(getattr(a, "allowed_commands", []) or []),
+        "blocked_commands": list(getattr(a, "blocked_commands", []) or []),
         "custom_instructions": getattr(a, "custom_instructions", ""),
         # How hard this agent works before answering. A front-end has to be able
         # to show and change these, so they have to be in the listing too, not
@@ -647,6 +649,9 @@ class SayriDaemon:
             else:
                 ask_before_run = bool(ask_before_run)
 
+        allowed_commands = _str_list(params.get("allowed_commands"))
+        blocked_commands = _str_list(params.get("blocked_commands"))
+
         profile = AgentProfile(
             id=agent_id or str(params.get("name", "")).strip().lower().replace(" ", "-"),
             name=str(params.get("name", "")).strip() or "New agent",
@@ -656,11 +661,17 @@ class SayriDaemon:
             allowed_skills=_str_list(params.get("allowed_skills")),
             allowed_plugins=_str_list(params.get("allowed_plugins")),
             allowed_tools=_str_list(params.get("allowed_tools")),
+            allowed_commands=allowed_commands,
+            blocked_commands=blocked_commands,
             investigation_loop=bool(params.get("investigation_loop", False)),
             reinforcement_learning=bool(params.get("reinforcement_learning", False)),
         )
         if level is not None:
             profile.sandbox = replace(profile.sandbox, level=level)
+        if allowed_commands:
+            profile.sandbox = replace(profile.sandbox, allowed_binaries=allowed_commands)
+        if blocked_commands:
+            profile.sandbox = replace(profile.sandbox, blocked_binaries=blocked_commands)
         if existing is not None:
             profile.id = existing.id
             profile.created_at = existing.created_at
@@ -669,8 +680,12 @@ class SayriDaemon:
             # The rest of the sandbox (timeout, network, binary lists, the
             # permission rules) belongs to the stored agent; the level and the
             # asking switch are the panel's to change.
-            profile.sandbox = replace(existing.sandbox, level=level) if level is not None \
-                else existing.sandbox
+            sb = replace(existing.sandbox, level=level) if level is not None else existing.sandbox
+            if allowed_commands:
+                sb = replace(sb, allowed_binaries=allowed_commands)
+            if blocked_commands:
+                sb = replace(sb, blocked_binaries=blocked_commands)
+            profile.sandbox = sb
         if ask_before_run is not None:
             profile.sandbox = replace(profile.sandbox, ask_before_run=ask_before_run)
         # `save_agent` returns the file it wrote, but every other agent command

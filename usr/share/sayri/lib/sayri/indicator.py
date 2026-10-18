@@ -143,10 +143,11 @@ class SayriIndicator:
     runs this as a child process and the two agree to shut down together.
     """
 
-    def __init__(self, ui_id: str = "", title: str = "") -> None:
+    def __init__(self, ui_id: str = "", title: str = "", lock_fd: Optional[int] = None) -> None:
         self.cfg = config.config
         self.ui_id = str(ui_id or "").strip()
         self.title = str(title or "").strip() or "Sayri"
+        self._lock_fd = lock_fd
         self._sayri_proc: subprocess.Popen | None = None
         self._settings_proc: subprocess.Popen | None = None
         _ensure_local_icon()
@@ -176,7 +177,7 @@ class SayriIndicator:
         # One click to take everything down, which is what people reach for
         # when the companion is stuck or in the way.
         kill = Gtk.MenuItem(label="Terminate all Sayri processes")
-        kill.connect("activate", self._on_kill_all)
+        kill.connect("activate", lambda _i=None: self._on_kill_all())
         self.menu.append(kill)
 
         self.quit_item = Gtk.MenuItem(label="Exit")
@@ -238,6 +239,9 @@ class SayriIndicator:
         self._sayri_proc = subprocess.Popen([sys.executable, "-m", "sayri", "--toggle"], env=env)
 
     def _on_open_settings(self, _item=None) -> None:
+        if is_gui_running():
+            send_sock_command("settings")
+            return
         if self._settings_proc and self._settings_proc.poll() is None:
             return
         env = dict(os.environ)
@@ -264,56 +268,39 @@ class SayriIndicator:
                     time.sleep(1.5)
         threading.Thread(target=_run, daemon=True).start()
 
-    def _on_kill_all(self) -> None:
-        """Take every Sayri process down, the daemon excepted.
-
-        The daemon is deliberately left running: it is the background service
-        and it is what would start things again. The companion that owns this
-        indicator goes with everything else, so this process has to go too.
-        """
-        def _run() -> None:
-            answered = _daemon_call("killall", {"include_daemon": False}, 8.0)
-            if not answered:
-                # No daemon to orchestrate the kill: stop whatever we started
-                # ourselves and go, rather than leave the menu click dead.
-                for proc in (self._sayri_proc, self._settings_proc):
-                    if proc and proc.poll() is None:
-                        try:
-                            proc.terminate()
-                        except OSError:
-                            pass
-                os._exit(0)
-            if self._sayri_proc and self._sayri_proc.poll() is None:
-                self._sayri_proc.terminate()
-            if self._settings_proc and self._settings_proc.poll() is None:
-                self._settings_proc.terminate()
-            Gtk.main_quit()
-        threading.Thread(target=_run, daemon=True).start()
+    def _on_kill_all(self, _item=None) -> None:
+        """Take every Sayri process down, including all daemons, gateways and indicators."""
+        if hasattr(self, "indicator") and self.indicator:
+            try:
+                self.indicator.set_status(AppIndicator.IndicatorStatus.PASSIVE)
+            except Exception:
+                pass
+        send_sock_command("hide")
+        if self._lock_fd:
+            try:
+                import fcntl
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                os.close(self._lock_fd)
+                self._lock_fd = None
+            except Exception:
+                pass
+        sysinfo.terminate_all_sayri(include_daemon=True, exclude_self=False)
+        os._exit(0)
 
     def _on_quit(self, _item=None) -> None:
-        """Hide the UI and stay in the tray, ready to be toggled back.
-
-        "Exit" used to send ``quit`` to the daemon, which took Sayri — this
-        indicator included — all the way down. That is what "Terminate all
-        Sayri processes" is for. What the tray icon owes the user on "Exit"
-        is the window going away and nothing else: the daemon and this
-        indicator keep running, and a click on the tray brings Sayri back.
-        """
+        """Hide the Sayri UI while keeping the tray indicator running."""
         if self.ui_id:
-            # A companion has no "hide": its window is owned by the plugin,
-            # and the plugin stops this indicator on the way out. Stopping
-            # that one companion is the closest Exit gets for companions.
             _daemon_call("killall", {"ui_id": self.ui_id}, 8.0)
             Gtk.main_quit()
             return
-        # sayri.sock is held by the desktop UI while it is up (it hides its
-        # own overlay) and by the daemon otherwise (which broadcasts "hide"
-        # to the connected front-ends). Either way this is a hide, never a
-        # quit, so nothing here may touch the daemon or this process.
-        if not send_sock_command("hide"):
-            # Nothing listening, so there is no UI to hide; the indicator
-            # still stays up, which is the whole point of this button.
-            print("[Sayri] Exit: no UI to hide; the tray icon stays")
+        if is_gui_running():
+            send_sock_command("hide")
+        for proc in (self._sayri_proc, self._settings_proc):
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
 
 
 def main(argv: Optional[list] = None) -> None:
@@ -337,7 +324,38 @@ def main(argv: Optional[list] = None) -> None:
             print(__doc__ or "")
             return
 
-    app = SayriIndicator(ui_id=ui_id, title=title)
+    import fcntl
+
+    # If this is a companion indicator, but the main indicator is already active,
+    # do not spawn a duplicate tray icon:
+    if ui_id:
+        main_lock_path = os.path.join(paths.state_dir(), "sayri-indicator.lock")
+        if os.path.exists(main_lock_path):
+            try:
+                mfd = os.open(main_lock_path, os.O_RDONLY)
+                try:
+                    fcntl.flock(mfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(mfd, fcntl.LOCK_UN)
+                    os.close(mfd)
+                except (BlockingIOError, OSError):
+                    os.close(mfd)
+                    print(f"[Sayri] Main tray indicator already active; skipping companion indicator for '{ui_id}'.")
+                    return
+            except OSError:
+                pass
+
+    lock_name = f"sayri-indicator{'-' + ui_id if ui_id else ''}.lock"
+    lock_path = os.path.join(paths.state_dir(), lock_name)
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.ftruncate(lock_fd, 0)
+        os.write(lock_fd, f"{os.getpid()}\n".encode())
+    except (BlockingIOError, OSError):
+        print(f"[Sayri] Tray indicator already running for '{ui_id or 'main'}'. Exiting duplicate.")
+        return
+
+    app = SayriIndicator(ui_id=ui_id, title=title, lock_fd=lock_fd)
     Gtk.main()
 
 

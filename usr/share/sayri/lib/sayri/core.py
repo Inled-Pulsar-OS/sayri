@@ -555,9 +555,20 @@ class SayriCore:
 
         if sandbox_level:
             try:
-                agent_profile = copy.deepcopy(agent_profile)
                 lvl_enum = getattr(SandboxLevel, sandbox_level, None) or SandboxLevel(sandbox_level)
-                agent_profile.sandbox.level = lvl_enum
+                levels_order = [
+                    SandboxLevel.LEVEL_0_NO_EXEC,
+                    SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+                    SandboxLevel.LEVEL_1_READONLY,
+                    SandboxLevel.LEVEL_2_ISOLATED_DEV,
+                    SandboxLevel.LEVEL_3_HOST_USER,
+                    SandboxLevel.LEVEL_4_HOST_ROOT,
+                ]
+                agent_idx = levels_order.index(agent_profile.sandbox.level) if agent_profile.sandbox.level in levels_order else 4
+                req_idx = levels_order.index(lvl_enum) if lvl_enum in levels_order else 4
+                if req_idx < agent_idx:
+                    agent_profile = copy.deepcopy(agent_profile)
+                    agent_profile.sandbox.level = lvl_enum
             except Exception:
                 pass
 

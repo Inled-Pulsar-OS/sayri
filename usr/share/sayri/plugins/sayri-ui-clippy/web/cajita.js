@@ -1464,6 +1464,7 @@ function watchAsset(asset, status, row) {
 const SANDBOX_LEVELS = [
   ["LEVEL_0_NO_EXEC", "Level 0 — Pure chat", "No commands at all. It can only talk."],
   ["LEVEL_1_READONLY", "Level 1 — Read-only", "Reads files in a bubblewrap sandbox. Writes nothing."],
+  ["LEVEL_RESTRICTED_COMMANDS", "Level Restricted — Allowed commands only", "Executes only explicitly permitted commands configured in the allowlist."],
   ["LEVEL_2_ISOLATED_DEV", "Level 2 — Isolated workspace", "A private workspace, no system access, no display."],
   ["LEVEL_3_HOST_USER", "Level 3 — Your user account", "Full terminal access as you. Can open apps and manage files."],
   ["LEVEL_4_HOST_ROOT", "Level 4 — Administrator", "Everything above plus root, asking for your password."],
@@ -1477,6 +1478,11 @@ function agentForm(box, agent) {
   prompt.value = a.system_prompt || "";
   const skills = el("input", { type: "text", value: (a.allowed_skills || []).join(", "), placeholder: "Leave blank to allow every skill" });
   const tools = el("input", { type: "text", value: (a.allowed_tools || []).join(", "), placeholder: "Leave blank to allow every tool" });
+  const cmds = el("input", {
+    type: "text",
+    value: (a.allowed_commands || (a.sandbox && (a.sandbox.allowed_commands || a.sandbox.allowed_binaries)) || []).join(", "),
+    placeholder: "e.g. gh *, git status, ls"
+  });
   const level = (a.sandbox && a.sandbox.level) || "LEVEL_3_HOST_USER";
   const levelInfo = el("div", { class: "note", text: sandboxNote(level) });
   const levelSel = select(
@@ -1498,6 +1504,8 @@ function agentForm(box, agent) {
     field("Description", desc),
     field("System prompt", prompt),
     levelField,
+    field("Allowed commands (for Level Restricted)", cmds,
+      "Comma-separated list of allowed commands/patterns (e.g. gh *, git status). Required when using Level Restricted."),
     field("Allowed skills", skills,
       "Blank means every installed skill is available. Name skills to limit it to those."),
     field("Allowed tools", tools,
@@ -1532,6 +1540,7 @@ function agentForm(box, agent) {
             system_prompt: prompt.value,
             allowed_skills: skills.value,
             allowed_tools: tools.value,
+            allowed_commands: cmds.value,
             sandbox_level: levelSel.value,
             investigation_loop: loopBox.checked,
             reinforcement_learning: learnBox.checked,

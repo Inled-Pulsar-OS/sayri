@@ -291,16 +291,113 @@ def get_primary_geometry_gnome() -> tuple[int, int, int, int] | None:
     return None
 
 
-def ensure_indicator() -> None:
-    """Ensure sayri-indicator is running in background for tray access."""
+def is_indicator_running(ui_id: str = "") -> bool:
+    """Check if an indicator instance is currently active via flock or process search."""
     try:
-        out = subprocess.run(["pgrep", "-f", "sayri.indicator|sayri-indicator"], capture_output=True, text=True, check=False).stdout
-        if out.strip():
-            return
+        lock_name = f"sayri-indicator{'-' + ui_id if ui_id else ''}.lock"
+        base_dir = os.environ.get("SAYRI_STATE_DIR") or default_state_dir()
+        lock_path = os.path.join(base_dir, lock_name)
+        if os.path.exists(lock_path):
+            import fcntl
+            fd = os.open(lock_path, os.O_RDONLY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+                # We acquired lock; process holding it is gone
+            except (BlockingIOError, OSError):
+                os.close(fd)
+                return True
     except Exception:
         pass
+
+    try:
+        marker = f"sayri.indicator --for-ui {ui_id}" if ui_id else "sayri.indicator"
+        out = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True, check=False).stdout
+        pids = [p.strip() for p in out.split() if p.strip() and int(p.strip()) != os.getpid()]
+        return len(pids) > 0
+    except Exception:
+        return False
+
+
+def ensure_indicator() -> None:
+    """Ensure sayri-indicator is running in background for tray access."""
+    if is_indicator_running():
+        return
     try:
         cmd = ["sayri-indicator"] if shutil.which("sayri-indicator") else [sys.executable, "-m", "sayri.indicator"]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **spawn_flags())
     except Exception:
         pass
+
+
+def terminate_all_sayri(include_daemon: bool = True, exclude_self: bool = True) -> list[str]:
+    """Forcefully and immediately terminate all Sayri processes, gateways, UI plugins and daemons."""
+    signalled: list[str] = []
+    own = os.getpid() if exclude_self else -1
+
+    # 1. Non-blocking stop of user systemd service if present
+    try:
+        subprocess.Popen(["systemctl", "--user", "stop", "app-sayri@autostart.service"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+    # 2. Fast kill of background daemons and components by pattern
+    patterns = [
+        "sayri.indicator",
+        "sayri.settings_cajita",
+        "sayri.settings_window",
+        "sayri.cajita",
+        "gateway.py",
+        "python3 -m sayri",
+        "sayri-agents",
+        "sayri-gateway",
+        "sayri-config",
+        "sayri --toggle",
+        "sayri --launch-ui",
+    ]
+    if include_daemon:
+        patterns.append("sayri.daemon")
+
+    for pat in patterns:
+        try:
+            kill_process_tree(pattern=pat)
+            signalled.append(pat)
+        except Exception:
+            pass
+
+    # 3. Direct scan of /proc for any remaining sayri / gateway / llama-server processes
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            if pid == own or pid == os.getpid():
+                continue
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                    raw = fh.read()
+                cmd = raw.replace(b"\0", b" ").decode("utf-8", "replace").lower()
+                if ("sayri" in cmd or "llama-server" in cmd or "prismml" in cmd or "gateway.py" in cmd) and "test" not in cmd:
+                    os.kill(pid, signal.SIGKILL)
+            except (OSError, ValueError):
+                pass
+    except Exception:
+        pass
+
+    # 4. Clean up stale lock and socket files
+    try:
+        from . import paths
+        for d in (paths.state_dir(), paths.config_dir()):
+            if os.path.isdir(d):
+                for f in os.listdir(d):
+                    if f.endswith(".pid") or f.endswith(".lock") or f.endswith(".sock"):
+                        try:
+                            os.unlink(os.path.join(d, f))
+                        except OSError:
+                            pass
+    except Exception:
+        pass
+
+    return signalled

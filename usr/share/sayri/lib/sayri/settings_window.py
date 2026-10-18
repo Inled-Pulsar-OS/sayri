@@ -738,13 +738,78 @@ class SettingsWindow:
         c1 = self._card(page, "Active Sub-Agent and Isolation Level")
         from sayri.domain.agent_creator import AgentCreator
         from sayri.adapters.sandbox.executor import SandboxExecutor
+        from sayri import config as _cfg
         
         agents = AgentCreator.list_agents()
         self.agent_combo = Gtk.ComboBoxText()
         for a in agents:
             self.agent_combo.append(a.id, f"{a.name} ({a.sandbox.level.value})")
-        self.agent_combo.set_active(0)
+        # set active to current app active if possible
+        try:
+            active = getattr(self.app, 'active_agent', None)
+            if active and active.id:
+                self.agent_combo.set_active_id(active.id)
+            else:
+                self.agent_combo.set_active(0)
+        except Exception:
+            self.agent_combo.set_active(0)
         self._row(c1, "Active Profile", "Select the sub-agent to handle queries", self.agent_combo)
+
+        # Allowed/Blocked commands for active agent
+        try:
+            from sayri.domain.agent_creator import AgentCreator
+            agents_list = agents
+            cur = getattr(self.app, 'active_agent', None)
+            aid = self.agent_combo.get_active_id()
+            if not cur or (aid and aid != getattr(cur,'id',None)):
+                cur = AgentCreator.get_agent(aid) if aid else (agents_list[0] if agents_list else None)
+            if cur:
+                self._allowed_cmds = Gtk.TextView()
+                self._allowed_cmds.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+                self._allowed_cmds.set_size_request(-1, 80)
+                buf = self._allowed_cmds.get_buffer()
+                buf.set_text('\n'.join(getattr(cur, 'allowed_commands', [])))
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                lbl = Gtk.Label(label="Allowed commands (one per line, supports * )")
+                lbl.set_halign(Gtk.Align.START)
+                box.append(lbl)
+                sc = Gtk.ScrolledWindow()
+                sc.set_child(self._allowed_cmds)
+                box.append(sc)
+                c1.append(box)
+
+                self._blocked_cmds = Gtk.TextView()
+                self._blocked_cmds.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+                self._blocked_cmds.set_size_request(-1, 60)
+                buf = self._blocked_cmds.get_buffer()
+                buf.set_text('\n'.join(getattr(cur, 'blocked_commands', [])))
+                box2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                lbl2 = Gtk.Label(label="Blocked commands (one per line)")
+                lbl2.set_halign(Gtk.Align.START)
+                box2.append(lbl2)
+                sc2 = Gtk.ScrolledWindow()
+                sc2.set_child(self._blocked_cmds)
+                box2.append(sc2)
+                c1.append(box2)
+
+                def on_save(b):
+                    try:
+                        aid = self.agent_combo.get_active_id() or getattr(cur,'id','')
+                        prof = AgentCreator.get_agent(aid) or cur
+                        buf = self._allowed_cmds.get_buffer(); s0,e0=buf.get_bounds()
+                        prof.allowed_commands=[x.strip() for x in buf.get_text(s0,e0,True).splitlines() if x.strip()]
+                        buf2=self._blocked_cmds.get_buffer(); s1,e1=buf2.get_bounds()
+                        prof.blocked_commands=[x.strip() for x in buf2.get_text(s1,e1,True).splitlines() if x.strip()]
+                        AgentCreator.save_agent(prof)
+                        b.set_sensitive(False)
+                    except Exception:
+                        pass
+                save_btn = Gtk.Button(label="Save agent restrictions")
+                save_btn.add_css_class("sayri-btn-primary")
+                save_btn.connect("clicked", on_save)
+                c1.append(save_btn)
+        except Exception:
+            pass
 
         # ── Card 2: Registered Sub-Agents ──
         c2 = self._card(page, "Registered Sub-Agents in Pulsar OS")

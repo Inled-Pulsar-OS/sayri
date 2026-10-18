@@ -139,6 +139,8 @@ class AgentCreator:
                     allowed_plugins=data.get("allowed_plugins", []),
                     allowed_tools=data.get("allowed_tools", []),
                     custom_instructions=data.get("custom_instructions", ""),
+                    allowed_commands=data.get("allowed_commands", []),
+                    blocked_commands=data.get("blocked_commands", []),
                     investigation_loop=bool(data.get("investigation_loop", False)),
                     reinforcement_learning=bool(data.get("reinforcement_learning", False)),
                     created_at=data.get("created_at", time.time()),
@@ -167,11 +169,51 @@ class AgentCreator:
         return None
 
     @classmethod
-    def save_agent(cls, profile: AgentProfile) -> str:
+    def save_agent(cls, profile: AgentProfile, caller_level: Optional[SandboxLevel] = None) -> str:
+        caller_level_env = os.environ.get("SAYRI_SANDBOX_LEVEL")
+        if caller_level is None and caller_level_env:
+            try:
+                caller_level = getattr(SandboxLevel, caller_level_env, None) or SandboxLevel(caller_level_env)
+            except Exception:
+                pass
+
+        if caller_level is not None:
+            if caller_level in (
+                SandboxLevel.LEVEL_0_NO_EXEC,
+                SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+                SandboxLevel.LEVEL_1_READONLY,
+                SandboxLevel.LEVEL_2_ISOLATED_DEV,
+            ):
+                raise PermissionError(
+                    f"Security violation: Sandbox level '{caller_level.value}' cannot create or modify agent profiles. "
+                    "Self-configuration is strictly restricted to LEVEL_3_HOST_USER."
+                )
+            levels_order = [
+                SandboxLevel.LEVEL_0_NO_EXEC,
+                SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+                SandboxLevel.LEVEL_1_READONLY,
+                SandboxLevel.LEVEL_2_ISOLATED_DEV,
+                SandboxLevel.LEVEL_3_HOST_USER,
+                SandboxLevel.LEVEL_4_HOST_ROOT,
+            ]
+            caller_idx = levels_order.index(caller_level) if caller_level in levels_order else 4
+            target_idx = levels_order.index(profile.sandbox.level) if profile.sandbox.level in levels_order else 4
+            if target_idx > caller_idx:
+                raise PermissionError(
+                    f"Security violation: Privilege escalation attempt blocked. "
+                    f"Caller at level '{caller_level.value}' cannot create agent at level '{profile.sandbox.level.value}'."
+                )
+
         clean_id = re.sub(r"[^\w\-]", "_", profile.id).strip("_")
         if not clean_id:
             clean_id = f"agent_{int(time.time())}"
         profile.id = clean_id
+
+        # Sync allowed_commands and sandbox.allowed_binaries
+        if profile.allowed_commands and not profile.sandbox.allowed_binaries:
+            profile.sandbox.allowed_binaries = list(profile.allowed_commands)
+        elif profile.sandbox.allowed_binaries and not profile.allowed_commands:
+            profile.allowed_commands = list(profile.sandbox.allowed_binaries)
 
         agents_dir = os.path.abspath(paths.agents_dir())
         os.makedirs(agents_dir, exist_ok=True)
@@ -195,6 +237,8 @@ class AgentCreator:
             "allowed_skills": profile.allowed_skills,
             "allowed_plugins": getattr(profile, "allowed_plugins", []),
             "allowed_tools": profile.allowed_tools,
+            "allowed_commands": getattr(profile, "allowed_commands", []),
+            "blocked_commands": getattr(profile, "blocked_commands", []),
             "investigation_loop": bool(getattr(profile, "investigation_loop", False)),
             "reinforcement_learning": bool(getattr(profile, "reinforcement_learning", False)),
             "created_at": profile.created_at,
@@ -210,6 +254,10 @@ class AgentCreator:
 
     @classmethod
     def delete_agent(cls, agent_id: str) -> bool:
+        caller_level_env = os.environ.get("SAYRI_SANDBOX_LEVEL")
+        if caller_level_env and caller_level_env not in ("LEVEL_3_HOST_USER", "LEVEL_4_HOST_ROOT"):
+            raise PermissionError("Security violation: Deleting agents is only permitted from LEVEL_3_HOST_USER.")
+
         clean_id = re.sub(r"[^\w\-]", "_", agent_id).strip("_")
         if not clean_id or clean_id == "default":
             return False
@@ -234,34 +282,83 @@ class AgentCreator:
         inherits_learning: bool = False,
     ) -> Tuple[bool, str, Optional[AgentProfile]]:
         """Parses natural language prompt into a structured AgentProfile with privilege containment."""
+        caller_env = os.environ.get("SAYRI_SANDBOX_LEVEL")
+        if caller_env:
+            try:
+                caller_lvl = SandboxLevel(caller_env)
+                if caller_lvl in (
+                    SandboxLevel.LEVEL_0_NO_EXEC,
+                    SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+                    SandboxLevel.LEVEL_1_READONLY,
+                    SandboxLevel.LEVEL_2_ISOLATED_DEV,
+                ):
+                    raise PermissionError(
+                        f"Security error: Caller in sandbox '{caller_lvl.value}' cannot create sub-agents. "
+                        "Self-configuration is only permitted at LEVEL_3_HOST_USER."
+                    )
+            except ValueError:
+                pass
+
         # Non-escalation enforcement: Restricted sandboxes cannot create subagents
-        if max_allowed_level in (SandboxLevel.LEVEL_0_NO_EXEC, SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
-            return (
-                False,
+        if max_allowed_level in (
+            SandboxLevel.LEVEL_0_NO_EXEC,
+            SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+            SandboxLevel.LEVEL_1_READONLY,
+            SandboxLevel.LEVEL_2_ISOLATED_DEV,
+        ):
+            raise PermissionError(
                 f"Security error: The current environment is restricted to level '{max_allowed_level.value}'. "
-                "It has no permissions to create or register sub-agents on the system.",
-                None,
+                "It has no permissions to create or register sub-agents on the system. "
+                "Self-configuration is only permitted at LEVEL_3_HOST_USER."
             )
 
         text = prompt_text.lower()
 
-        # Heuristic determination of Sandbox Level
+        # Heuristic determination of Sandbox Level and Allowed Commands
         sandbox_level = SandboxLevel.LEVEL_3_HOST_USER
-        if "sin comandos" in text or "no ejecute" in text or "no comandos" in text or "solo chat" in text or "discord" in text or "telegram" in text or "no commands" in text or "chat only" in text or "conversational only" in text:
+        allowed_cmds: List[str] = []
+
+        if "gh" in text or "github" in text:
+            allowed_cmds.append("gh *")
+        if "git" in text:
+            allowed_cmds.append("git *")
+        if "curl" in text:
+            allowed_cmds.append("curl *")
+        if "jq" in text:
+            allowed_cmds.append("jq *")
+        if "npm" in text:
+            allowed_cmds.append("npm *")
+        if "python" in text:
+            allowed_cmds.append("python3 *")
+
+        restricted_triggers = (
+            "comandos especificos", "comandos específicos", "solo comandos",
+            "restricted commands", "allowlist", "comandos permitidos",
+            "comandos restringidos", "restricted", "restringido", "restricted command",
+            "solo con comandos", "limitado a comandos", "solo ejecute", "solo puede ejecutar"
+        )
+        if any(w in text for w in restricted_triggers) or (
+            allowed_cmds and any(w in text for w in ("solo", "only", "restringido", "limita", "resumen", "resum"))
+        ):
+            sandbox_level = SandboxLevel.LEVEL_RESTRICTED_COMMANDS
+            if not allowed_cmds:
+                allowed_cmds = ["gh *", "git *"]
+        elif any(w in text for w in ("sin comandos", "no ejecute", "no comandos", "solo chat", "no commands", "chat only", "conversational only")):
             sandbox_level = SandboxLevel.LEVEL_0_NO_EXEC
-        elif "solo lectura" in text or "aislado" in text or "sandbox" in text or "read only" in text or "isolated" in text:
+        elif any(w in text for w in ("solo lectura", "aislado", "sandbox", "read only", "isolated")):
             sandbox_level = SandboxLevel.LEVEL_2_ISOLATED_DEV
 
         # Enforce privilege boundary: target level can never exceed max_allowed_level
         levels_order = [
             SandboxLevel.LEVEL_0_NO_EXEC,
+            SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
             SandboxLevel.LEVEL_1_READONLY,
             SandboxLevel.LEVEL_2_ISOLATED_DEV,
             SandboxLevel.LEVEL_3_HOST_USER,
             SandboxLevel.LEVEL_4_HOST_ROOT,
         ]
-        caller_idx = levels_order.index(max_allowed_level) if max_allowed_level in levels_order else 3
-        target_idx = levels_order.index(sandbox_level) if sandbox_level in levels_order else 3
+        caller_idx = levels_order.index(max_allowed_level) if max_allowed_level in levels_order else 4
+        target_idx = levels_order.index(sandbox_level) if sandbox_level in levels_order else 4
         if target_idx > caller_idx:
             sandbox_level = max_allowed_level
 
@@ -298,17 +395,15 @@ class AgentCreator:
             sandbox=SandboxConfig(
                 level=sandbox_level,
                 timeout_seconds=12,
+                allowed_binaries=allowed_cmds,
             ),
             allowed_tools=[] if sandbox_level == SandboxLevel.LEVEL_0_NO_EXEC else ["bash"],
-            # A sub-agent inherits the caller's stance on searching and on
-            # learning, rather than being born ready to search. A user who
-            # turned the loop off did not mean "except for the agents you spawn
-            # by voice".
+            allowed_commands=allowed_cmds,
             investigation_loop=bool(inherits_investigation_loop),
             reinforcement_learning=bool(inherits_learning),
         )
 
-        saved_path = cls.save_agent(profile)
+        saved_path = cls.save_agent(profile, caller_level=max_allowed_level)
         msg = f"✓ Sub-agent '{profile.name}' created successfully (Level: {sandbox_level.value}) at `{saved_path}`."
         return True, msg, profile
 

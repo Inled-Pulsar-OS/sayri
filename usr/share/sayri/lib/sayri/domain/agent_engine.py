@@ -146,25 +146,32 @@ class AgentEngine:
                 items = [f"- {s['name']}: {s['description']}" for s in filtered_skills[:15]]
                 skills_summary = "\nAUTHORIZED SKILLS (read details with the 'read_skill' tool):\n" + "\n".join(items)
 
-        # Self-configuration capabilities (only for LEVEL_3/LEVEL_4 agents)
+        # Self-configuration capabilities (strictly restricted to LEVEL_3/LEVEL_4 agents)
         self_config_section = ""
         if is_self_configurable:
             self_config_section = (
-                "\nSELF-CONFIGURATION (you are running at a privileged level; you may configure Sayri):\n"
-                "- Create/update agent profiles: emit `sayri-agents create <json>` or `sayri-agents save <json>`\n"
-                "- Create/update gateway instances: emit `sayri-gateway save <json>` and `sayri-gateway start <id>`\n"
-                "- Update settings: emit `sayri-config set <group.key> <value>`\n"
-                "- Install skills: emit `sayri-skills install <slug>`\n"
-                "- Create a Discord gateway: use `sayri-gateway save` with plugin_id `sayri-gateway-discord`\n"
-                "  Example: `sayri-gateway save {\"id\":\"my-discord\",\"plugin_id\":\"sayri-gateway-discord\",\"agent_id\":\"default\",\"sandbox_level\":\"LEVEL_1_READONLY\",\"secret_key\":\"DISCORD_BOT_TOKEN\"}`\n"
-                "  (it includes the passive conversation memory journal, toggled in chat with /memory on|off)\n"
-                "IMPORTANT: Only perform these actions when the user explicitly asks. Never self-modify without permission.\n"
+                "\nSELF-CONFIGURATION (Available ONLY at LEVEL_3_HOST_USER):\n"
+                "You are running with full host user privileges and may self-configure Sayri when requested by the user:\n"
+                "- Create/update agent profiles: `sayri-agents create <json>` or `sayri-agents save <json>`\n"
+                "  * Example (creating an agent with restricted commands, e.g. for monitoring Discord and filing tasks as proposals in gh cli):\n"
+                "    `sayri-agents create '{\"id\":\"discord-tasks\",\"name\":\"Discord Tasks\",\"system_prompt\":\"Summarize Discord conversations and when a task is discussed, create an issue/proposal using gh issue create.\",\"sandbox\":{\"level\":\"LEVEL_RESTRICTED_COMMANDS\"},\"allowed_commands\":[\"gh *\"]}'`\n"
+                "- Create/update gateway instances: `sayri-gateway save <json>` and `sayri-gateway start <id>`\n"
+                "  * Note: The gateway instance inherits its sandbox directly from the bound agent profile (no separate selector).\n"
+                "  * Example: `sayri-gateway save '{\"id\":\"my-discord\",\"name\":\"Discord Bot\",\"plugin_id\":\"sayri-gateway-discord\",\"agent_id\":\"discord-tasks\",\"secret_key\":\"DISCORD_BOT_TOKEN\"}'`\n"
+                "- Update settings: `sayri-config set <group.key> <value>`\n"
+                "- Install skills from Store: `sayri-skills install <slug>`\n"
+                "IMPORTANT: Self-configuration is ONLY allowed when running at LEVEL_3_HOST_USER. Agents in sandboxes (< Level 3) are strictly forbidden from self-configuring.\n"
+                "Only perform configuration changes when the user explicitly asks for them.\n"
             )
 
-        # Sandbox / Execution context (clear & grounded so small models don't hallucinate sandbox isolation)
+        # Sandbox / Execution context
         if is_level_0:
             sandbox_info = "Active Isolation Level: LEVEL_0_NO_EXEC (STRICTLY FORBIDDEN TO EXECUTE BASH/SYSTEM COMMANDS; you are in a pure conversational assistant mode)."
             execution_policy = "- LEVEL_0_NO_EXEC: Purely conversational mode. No terminal or system access."
+        elif profile.sandbox.level == SandboxLevel.LEVEL_RESTRICTED_COMMANDS:
+            allowed_preview = ", ".join(profile.allowed_commands or profile.sandbox.allowed_binaries or ["none"])
+            sandbox_info = f"Active Isolation Level: LEVEL_RESTRICTED_COMMANDS (Restricted command execution; only permitted commands: {allowed_preview})."
+            execution_policy = f"- LEVEL_RESTRICTED_COMMANDS: You may ONLY execute the specifically allowed commands: {allowed_preview}. All other commands will be blocked."
         elif profile.sandbox.level in (SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
             sandbox_info = f"Active Isolation Level: {profile.sandbox.level.value} (Isolated Bubblewrap sandbox container without graphical Wayland/X11 display)."
             execution_policy = f"- {profile.sandbox.level.value}: Isolated Bubblewrap environment for read or isolated files. No display server access."
@@ -259,8 +266,8 @@ class AgentEngine:
             f"{self_config_section}"
             "YOUR CAPABILITIES IN PULSAR OS:\n"
             "1. System Orchestration: You can read files, open applications and run tools within your security limits.\n"
-            "2. Sub-Agent Creation and Management: You can create sub-agents configured with different models and sandbox levels.\n"
-            "3. Skills and Plugins: You can search for and install extensions from the Pulsar Store (https://store-os.inled.es).\n"
+            + ("2. Sub-Agent & Gateway Configuration: You are running at Level 3 and may self-configure sub-agents and channel integrations upon user request.\n" if is_self_configurable else "2. Sandbox Containment: You are running in a restricted sandbox. Sub-agent creation, self-configuration, and privilege elevation are strictly forbidden.\n")
+            + "3. Skills and Plugins: You can search for and install extensions from the Pulsar Store (https://store-os.inled.es).\n"
             "4. Memory & Conversation History: You maintain context with recent messages. If you need details from earlier in the conversation, you can emit ```search_history <keyword>``` to query past messages.\n"
             + ("5. Learned Preferences: You can query your learned experience and past user preferences anytime in bash with ```sayri-pref query \"<keyword>\"```.\n" if getattr(profile, "reinforcement_learning", False) else "")
             + f"{skills_summary}\n\n"
@@ -307,15 +314,18 @@ class AgentEngine:
         subagent_triggers = [
             "crea un subagente", "crear un subagente", "crear subagente", "crea subagente",
             "nuevo subagente", "configura un subagente", "configurar subagente", "quiero un subagente",
+            "crea un agente", "crear un agente", "crear agente", "crea agente", "nuevo agente",
+            "configura un agente", "configurar agente", "quiero un agente",
             "create a subagent", "create subagent", "new subagent", "make a subagent",
-            "set up a subagent", "i want a subagent", "configure a subagent"
+            "set up a subagent", "i want a subagent", "configure a subagent",
+            "create an agent", "create agent", "new agent", "make an agent", "configure an agent"
         ]
         if any(trig in clean_prompt for trig in subagent_triggers):
-            if profile.sandbox.level in (SandboxLevel.LEVEL_0_NO_EXEC, SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
+            if profile.sandbox.level not in (SandboxLevel.LEVEL_3_HOST_USER, SandboxLevel.LEVEL_4_HOST_ROOT):
                 err_msg = (
-                    f"⚠️ Security Error: The current agent is running in a restricted environment ({profile.sandbox.level.value}). "
+                    f"⚠️ Security Error: The current agent is running in a restricted sandbox ({profile.sandbox.level.value}). "
                     "To prevent privilege escalation, this sandbox level strictly forbids creating or configuring sub-agents on the system. "
-                    "This action must be performed from the Sayri desktop application or through an agent with LEVEL_3_HOST_USER level."
+                    "Self-configuration and sub-agent creation are exclusively permitted at LEVEL_3_HOST_USER."
                 )
                 reply_msg = Message(role="assistant", content=err_msg)
                 self.storage.add_message(session.id, reply_msg)
@@ -342,11 +352,11 @@ class AgentEngine:
             "create a skill", "create skill", "install the skill", "install skill",
             "install the plugin", "install plugin"
         ]
-        if any(trig in clean_prompt for trig in skill_triggers) and profile.sandbox.level in (SandboxLevel.LEVEL_0_NO_EXEC, SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV):
+        if any(trig in clean_prompt for trig in skill_triggers) and profile.sandbox.level not in (SandboxLevel.LEVEL_3_HOST_USER, SandboxLevel.LEVEL_4_HOST_ROOT):
             err_msg = (
-                f"⚠️ Security Error: The current agent is running at level {profile.sandbox.level.value}. "
+                f"⚠️ Security Error: The current agent is running at {profile.sandbox.level.value}. "
                 "It has no permissions to install or register new skills/plugins on the system. "
-                "To install extensions, use the Pulsar Store or the Sayri Settings interface."
+                "Self-configuration and extension installation are exclusively permitted at LEVEL_3_HOST_USER."
             )
             reply_msg = Message(role="assistant", content=err_msg)
             self.storage.add_message(session.id, reply_msg)
@@ -551,6 +561,101 @@ class AgentEngine:
                 cmd = m.group(1).strip()
                 if cmd:
                     on_tool_start(cmd)
+
+                    # 1. Privilege containment: Sandboxed agents (< Level 3) cannot invoke self-configuration binaries
+                    if profile.sandbox.level not in (SandboxLevel.LEVEL_3_HOST_USER, SandboxLevel.LEVEL_4_HOST_ROOT):
+                        restricted_mgmt = ("sayri-agents", "sayri-gateway", "sayri-config", "sayri-skills", "sayri-plugins", "sayri-settings")
+                        cmd_tokens = set(cmd.split())
+                        if any(b in cmd_tokens or f"/{b}" in cmd for b in restricted_mgmt):
+                            retcode = 126
+                            output = (
+                                f"🔒 [SECURITY POLICY - PRIVILEGE CONTAINMENT]: Execution of '{cmd}' is blocked. "
+                                f"Self-configuration tools ({', '.join(restricted_mgmt)}) are strictly forbidden "
+                                f"from sandbox level '{profile.sandbox.level.value}'. Self-configuration is exclusively permitted at LEVEL_3_HOST_USER."
+                            )
+                            duration = 1.0
+                            on_tool_finish(cmd, output, retcode)
+                            tc = ToolCall(name="bash", arguments={"command": cmd}, status=ToolCallStatus.FAILED, output=output, exit_code=retcode, duration_ms=duration)
+                            assistant_msg = Message(role="assistant", content=full_text, tool_calls=[tc])
+                            self.storage.add_message(session_id, assistant_msg)
+                            next_messages = list(messages); next_messages.append({"role": "assistant", "content": full_text})
+                            observation = f"⚠️ [EXECUTION BLOCKED (Exit Code {retcode})]:\n{output}"
+                            next_messages.append({"role": "user", "content": observation})
+                            self._react_loop(query_id, session_id, profile, next_messages, cfg, depth + 1, on_delta, on_done, on_tool_start, on_tool_finish, on_error)
+                            return
+
+                    # 2. Strict LEVEL_RESTRICTED_COMMANDS Enforcement
+                    if profile.sandbox.level == SandboxLevel.LEVEL_RESTRICTED_COMMANDS:
+                        from sayri.domain import permissions
+                        allowed_list = list(getattr(profile, "allowed_commands", []) or profile.sandbox.allowed_binaries or [])
+                        if not permissions.is_command_in_allowlist(cmd, allowed_list):
+                            retcode = 126
+                            output = (
+                                f"🔒 [SECURITY POLICY - LEVEL_RESTRICTED_COMMANDS]: Command blocked. "
+                                f"This agent is configured with LEVEL_RESTRICTED_COMMANDS and can only execute commands "
+                                f"matching its allowlist: {allowed_list if allowed_list else 'none configured'}."
+                            )
+                            duration = 1.0
+                            on_tool_finish(cmd, output, retcode)
+                            tc = ToolCall(name="bash", arguments={"command": cmd}, status=ToolCallStatus.FAILED, output=output, exit_code=retcode, duration_ms=duration)
+                            assistant_msg = Message(role="assistant", content=full_text, tool_calls=[tc])
+                            self.storage.add_message(session_id, assistant_msg)
+                            next_messages = list(messages); next_messages.append({"role": "assistant", "content": full_text})
+                            observation = f"⚠️ [EXECUTION BLOCKED (Exit Code {retcode})]:\n{output}\n\nCRITICAL RULE: You can only execute commands permitted by your allowlist."
+                            next_messages.append({"role": "user", "content": observation})
+                            self._react_loop(query_id, session_id, profile, next_messages, cfg, depth + 1, on_delta, on_done, on_tool_start, on_tool_finish, on_error)
+                            return
+
+                    # Agent command allowlist/denylist enforcement
+                    try:
+                        from sayri.domain import permissions
+                        cmd_norm = permissions.normalize_shell(cmd)
+                        allowed = getattr(profile, "allowed_commands", None) or []
+                        blocked = getattr(profile, "blocked_commands", None) or []
+                        if allowed:
+                            ok = False
+                            for pat in allowed:
+                                try:
+                                    if re.fullmatch(re.escape(pat).replace('\\*', '.*'), cmd_norm, re.DOTALL | re.IGNORECASE) or cmd_norm.startswith(pat.strip()):
+                                        ok = True
+                                        break
+                                except Exception:
+                                    if pat.strip() and cmd_norm.startswith(pat.strip()):
+                                        ok = True
+                                        break
+                            if not ok:
+                                retcode = 126
+                                output = f"🔒 [AGENT POLICY - ALLOWLIST] Command blocked. Not in allowed_commands: {cmd_norm}"
+                                duration = 1.0
+                                on_tool_finish(cmd, output, retcode)
+                                tc = ToolCall(name="bash", arguments={"command": cmd}, status=ToolCallStatus.FAILED, output=output, exit_code=retcode, duration_ms=duration)
+                                assistant_msg = Message(role="assistant", content=full_text, tool_calls=[tc])
+                                self.storage.add_message(session_id, assistant_msg)
+                                next_messages = list(messages); next_messages.append({"role": "assistant", "content": full_text})
+                                observation = f"⚠️ [EXECUTION ERROR (Exit Code {retcode})]:\n{output}\n\nCRITICAL RULE: This command is not permitted by the agent's allowed_commands list."
+                                next_messages.append({"role": "user", "content": observation})
+                                self._react_loop(query_id, session_id, profile, next_messages, cfg, depth + 1, on_delta, on_done, on_tool_start, on_tool_finish, on_error)
+                                return
+                        if blocked:
+                            for pat in blocked:
+                                try:
+                                    if re.fullmatch(re.escape(pat).replace('\\*', '.*'), cmd_norm, re.DOTALL | re.IGNORECASE) or cmd_norm.startswith(pat.strip()) or pat.strip() in cmd_norm:
+                                        retcode = 126
+                                        output = f"🔒 [AGENT POLICY - BLOCKLIST] Command blocked: {cmd_norm}"
+                                        duration = 1.0
+                                        on_tool_finish(cmd, output, retcode)
+                                        tc = ToolCall(name="bash", arguments={"command": cmd}, status=ToolCallStatus.FAILED, output=output, exit_code=retcode, duration_ms=duration)
+                                        assistant_msg = Message(role="assistant", content=full_text, tool_calls=[tc])
+                                        self.storage.add_message(session_id, assistant_msg)
+                                        next_messages = list(messages); next_messages.append({"role": "assistant", "content": full_text})
+                                        observation = f"⚠️ [EXECUTION ERROR (Exit Code {retcode})]:\n{output}\n\nCRITICAL RULE: This command is blocked by the agent's blocked_commands list."
+                                        next_messages.append({"role": "user", "content": observation})
+                                        self._react_loop(query_id, session_id, profile, next_messages, cfg, depth + 1, on_delta, on_done, on_tool_start, on_tool_finish, on_error)
+                                        return
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
 
                     # Strict Sandbox Level 0 Enforcement: Block without executing
                     if profile.sandbox.level == SandboxLevel.LEVEL_0_NO_EXEC:

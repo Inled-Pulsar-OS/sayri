@@ -172,6 +172,7 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "default_ui": "desktop",  # UI the launcher opens: "desktop", "orb" or a plugin id
         "autostart_mode": "ui",  # "ui" = UI + daemon at login | "daemon" = daemon only
         "setup_complete": False,  # set by the welcome wizard on first run
+        "close_on_click_outside": False,  # dismiss UI when clicking outside / losing focus
     },
 }
 
@@ -213,6 +214,7 @@ _TYPES: dict[str, dict[str, str]] = {
         "default_ui": "string",
         "autostart_mode": "string",
         "setup_complete": "bool",
+        "close_on_click_outside": "bool",
     },
 }
 

@@ -311,10 +311,15 @@ class GatewaySupervisor:
                 if val:
                     env[req_sec] = val
 
-        # Bind instance configuration
+        # Bind instance configuration (sandbox is inherited directly from the bound agent)
+        target_agent_id = inst.get("agent_id", "default")
+        from sayri.domain.agent_creator import AgentCreator
+        bound_agent = AgentCreator.get_agent(target_agent_id)
+        sandbox_level = bound_agent.sandbox.level.value if bound_agent else inst.get("sandbox_level", "LEVEL_1_READONLY")
+
         env["SAYRI_GATEWAY_INSTANCE_ID"] = instance_id
-        env["SAYRI_TARGET_AGENT"] = inst.get("agent_id", "default")
-        env["SAYRI_SANDBOX_LEVEL"] = inst.get("sandbox_level", "LEVEL_1_READONLY")
+        env["SAYRI_TARGET_AGENT"] = target_agent_id
+        env["SAYRI_SANDBOX_LEVEL"] = sandbox_level
         env["SAYRI_ALLOW_RESUME_PREVIOUS"] = "1" if inst.get("allow_resume_previous", True) else "0"
         timeout_secs = int(inst.get("inactivity_timeout_minutes", 30)) * 60
         env["SAYRI_INACTIVITY_TIMEOUT"] = str(timeout_secs)

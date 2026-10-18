@@ -31,13 +31,32 @@ from sayri.domain.models import (
 )
 
 
+def _check_privilege() -> bool:
+    caller_level = os.environ.get("SAYRI_SANDBOX_LEVEL")
+    if caller_level and caller_level not in ("LEVEL_3_HOST_USER", "LEVEL_4_HOST_ROOT"):
+        print(
+            f"Security error: Self-configuration via 'sayri-agents' is strictly forbidden "
+            f"from sandbox level '{caller_level}'. Self-configuration is only permitted at LEVEL_3_HOST_USER.",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def _profile_from_dict(data: dict) -> AgentProfile:
     sandbox_data = data.get("sandbox", {})
-    level_str = sandbox_data.get("level", "LEVEL_3_HOST_USER")
+    level_str = sandbox_data.get("level", data.get("sandbox_level", "LEVEL_3_HOST_USER"))
     try:
         level = SandboxLevel(level_str)
     except ValueError:
         level = SandboxLevel.LEVEL_3_HOST_USER
+
+    allowed_cmds = list(data.get("allowed_commands", []))
+    allowed_bins = list(sandbox_data.get("allowed_binaries", []))
+    if allowed_cmds and not allowed_bins:
+        allowed_bins = list(allowed_cmds)
+    elif allowed_bins and not allowed_cmds:
+        allowed_cmds = list(allowed_bins)
 
     model_data = data.get("model", {})
     profile = AgentProfile(
@@ -55,7 +74,7 @@ def _profile_from_dict(data: dict) -> AgentProfile:
             level=level,
             timeout_seconds=int(sandbox_data.get("timeout_seconds", 10)),
             allow_network=bool(sandbox_data.get("allow_network", True)),
-            allowed_binaries=list(sandbox_data.get("allowed_binaries", [])),
+            allowed_binaries=allowed_bins,
             blocked_binaries=list(sandbox_data.get("blocked_binaries", ["mkfs", "dd", "shutdown", "reboot"])),
             permission_rules=list(sandbox_data.get("permission_rules", [])),
             ask_before_run=bool(sandbox_data.get("ask_before_run", False)),
@@ -64,6 +83,8 @@ def _profile_from_dict(data: dict) -> AgentProfile:
         allowed_plugins=list(data.get("allowed_plugins", [])),
         allowed_tools=list(data.get("allowed_tools", [])),
         custom_instructions=data.get("custom_instructions", ""),
+        allowed_commands=allowed_cmds,
+        blocked_commands=list(data.get("blocked_commands", [])),
         investigation_loop=bool(data.get("investigation_loop", False)),
         reinforcement_learning=bool(data.get("reinforcement_learning", False)),
     )
@@ -106,6 +127,8 @@ def cmd_get(args):
         "allowed_skills": agent.allowed_skills,
         "allowed_plugins": getattr(agent, "allowed_plugins", []),
         "allowed_tools": agent.allowed_tools,
+        "allowed_commands": getattr(agent, "allowed_commands", []),
+        "blocked_commands": getattr(agent, "blocked_commands", []),
         "custom_instructions": agent.custom_instructions,
         "investigation_loop": agent.investigation_loop,
         "reinforcement_learning": agent.reinforcement_learning,
@@ -114,6 +137,8 @@ def cmd_get(args):
 
 
 def cmd_create(args):
+    if not _check_privilege():
+        return 126
     if not args:
         print("Usage: sayri-agents create <json-file|json-string>", file=sys.stderr)
         return 1
@@ -124,9 +149,13 @@ def cmd_create(args):
     else:
         data = json.loads(raw)
     profile = _profile_from_dict(data)
-    path = AgentCreator.save_agent(profile)
-    print(f"✓ Agent '{profile.name}' saved to {path}")
-    return 0
+    try:
+        path = AgentCreator.save_agent(profile)
+        print(f"✓ Agent '{profile.name}' saved to {path}")
+        return 0
+    except PermissionError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 126
 
 
 def cmd_save(args):
@@ -134,6 +163,8 @@ def cmd_save(args):
 
 
 def cmd_delete(args):
+    if not _check_privilege():
+        return 126
     if not args:
         print("Usage: sayri-agents delete <id>", file=sys.stderr)
         return 1

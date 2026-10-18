@@ -460,15 +460,14 @@ def pin_x11_window(win: Gtk.Window, *, top_margin: int = 44,
                 ctypes.cast(states, ctypes.c_void_p), 4
             )
 
-            # Set DOCK / NOTIFICATION window type so Mutter pins it in the top Overlay layer
+            # Set UTILITY / NOTIFICATION window type so Mutter pins it and manages focus properly
             net_wm_wtype = libx11.XInternAtom(dpy, b"_NET_WM_WINDOW_TYPE", 0)
-            wtype_dock = libx11.XInternAtom(dpy, b"_NET_WM_WINDOW_TYPE_DOCK", 0)
-            wtype_notification = libx11.XInternAtom(dpy, b"_NET_WM_WINDOW_TYPE_NOTIFICATION", 0)
             wtype_utility = libx11.XInternAtom(dpy, b"_NET_WM_WINDOW_TYPE_UTILITY", 0)
-            wtypes = (ctypes.c_ulong * 3)(wtype_dock, wtype_notification, wtype_utility)
+            wtype_notification = libx11.XInternAtom(dpy, b"_NET_WM_WINDOW_TYPE_NOTIFICATION", 0)
+            wtypes = (ctypes.c_ulong * 2)(wtype_utility, wtype_notification)
             libx11.XChangeProperty(
                 dpy, xid, net_wm_wtype, XA_ATOM, 32, 2,
-                ctypes.cast(wtypes, ctypes.c_void_p), 3
+                ctypes.cast(wtypes, ctypes.c_void_p), 2
             )
 
             # Send EWMH ClientMessage to Root Window to notify Mutter window manager

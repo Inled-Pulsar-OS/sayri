@@ -71,10 +71,17 @@ class SandboxExecutor:
                 0.0,
             )
 
-        # 3. Block internal manager binaries in isolated sandboxes (LEVEL_1_READONLY & LEVEL_2_ISOLATED_DEV)
-        is_isolated = config.level in (SandboxLevel.LEVEL_1_READONLY, SandboxLevel.LEVEL_2_ISOLATED_DEV)
+        # 3. Block internal manager binaries in isolated sandboxes
+        is_isolated = config.level in (
+            SandboxLevel.LEVEL_RESTRICTED_COMMANDS,
+            SandboxLevel.LEVEL_1_READONLY,
+            SandboxLevel.LEVEL_2_ISOLATED_DEV,
+        )
         if is_isolated:
-            internal_blocked = ("sayri-skills", "sayri-plugins", "sayri-settings", "sayri", "pkill", "killall")
+            internal_blocked = (
+                "sayri-skills", "sayri-plugins", "sayri-settings", "sayri-agents",
+                "sayri-gateway", "sayri-config", "sayri", "pkill", "killall",
+            )
             cmd_words = set(raw_cmd.split())
             for b in internal_blocked:
                 if b in cmd_words or f"/{b}" in raw_cmd:
@@ -84,7 +91,19 @@ class SandboxExecutor:
                         0.0,
                     )
 
-        # 4. Permission rules: the agent's own ordered rules, then the
+        # 4. Level Restricted Commands: Only specifically allowed commands can run
+        if config.level == SandboxLevel.LEVEL_RESTRICTED_COMMANDS:
+            allowed = list(config.allowed_binaries or [])
+            if not permissions.is_command_in_allowlist(raw_cmd, allowed):
+                return (
+                    126,
+                    f"Security error (LEVEL_RESTRICTED_COMMANDS): Command '{raw_cmd}' is blocked. "
+                    f"This agent is configured with restricted command execution and can only run specific allowed commands: "
+                    f"{allowed if allowed else 'none configured'}.",
+                    0.0,
+                )
+
+        # 5. Permission rules: the agent's own ordered rules, then the
         #    tightening-only policy layer. This replaces a word-by-word
         #    comparison against four hardcoded names, which missed "rm -rf",
         #    "chmod", "mv" and anything piped into a shell, and could not ask
@@ -126,7 +145,7 @@ class SandboxExecutor:
 
         timeout = max(1, config.timeout_seconds)
 
-        # 5. Level 4: Elevated Host with Polkit (pkexec)
+        # 6. Level 4: Elevated Host with Polkit (pkexec)
         if config.level == SandboxLevel.LEVEL_4_HOST_ROOT:
             if raw_cmd.startswith("sudo "):
                 raw_cmd = "pkexec " + raw_cmd[5:]
@@ -134,11 +153,11 @@ class SandboxExecutor:
                 raw_cmd = "pkexec " + raw_cmd
             return self._run_host(raw_cmd, timeout, start_time, elevated=True)
 
-        # 6. Level 3: Host as Current User
+        # 7. Level 3: Host as Current User
         if config.level == SandboxLevel.LEVEL_3_HOST_USER or not self.bwrap_available:
             return self._run_host(raw_cmd, timeout, start_time, elevated=False)
 
-        # 7. Level 1 & 2: Sandboxed with Bubblewrap (bwrap)
+        # 8. Level Restricted Commands, Level 1 & 2: Sandboxed with Bubblewrap (bwrap)
         return self._run_bwrap(raw_cmd, config, agent_id, timeout, start_time)
 
     def _run_host(

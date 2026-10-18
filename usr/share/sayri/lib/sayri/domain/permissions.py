@@ -477,9 +477,40 @@ def apply_bypass(decision: Decision, level: Any, ask_enabled: bool = True) -> De
 
 
 def default_effect_for_level(level: Any) -> str:
-    """ALLOW for a level that may execute, DENY for one that may not."""
+    """ALLOW for a level that may execute broadly, DENY for one that may not."""
     name = getattr(level, "name", str(level))
-    return DENY if "LEVEL_0" in name else ALLOW
+    if "LEVEL_0" in name or "LEVEL_RESTRICTED" in name:
+        return DENY
+    return ALLOW
+
+
+def is_command_in_allowlist(command: str, allowed_patterns: Sequence[str]) -> bool:
+    """Whether a shell command matches any pattern in an allowlist.
+
+    Checks normalized forms, whole-value wildcards (e.g. 'gh *', 'git status'),
+    and prefix matches.
+    """
+    if not allowed_patterns:
+        return False
+    norm_cmd = _normalize_shell(command)
+    for pat in allowed_patterns:
+        p_str = str(pat or "").strip()
+        if not p_str:
+            continue
+        if p_str == "*":
+            return True
+        if resource_matches(p_str, command, shell=True):
+            return True
+        norm_p = _normalize_shell(p_str)
+        if norm_cmd == norm_p or norm_cmd.startswith(norm_p + " "):
+            return True
+        try:
+            regex_pat = re.escape(p_str).replace('\\*', '.*').replace('\\?', '.')
+            if re.fullmatch(regex_pat, norm_cmd, re.IGNORECASE | re.DOTALL):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def describe_effects() -> str:

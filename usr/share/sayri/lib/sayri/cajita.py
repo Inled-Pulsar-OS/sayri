@@ -2065,54 +2065,77 @@ class SayriCajita(Gtk.Box):
                         save_ps.connect("clicked", _save_settings)
                         box.append(save_ps)
 
-            lbl_sb = Gtk.Label(label="Minimum Required Sandbox Level:")
-            lbl_sb.set_halign(Gtk.Align.START)
-            box.append(lbl_sb)
+            is_gateway = (
+                manifest.get("type") == "gateway"
+                or plugin_data.get("type") == "gateway"
+                or "gateway" in pid.lower()
+                or manifest.get("entrypoint") == "gateway.py"
+            )
+            if is_gateway:
+                gw_info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                gw_info_box.set_margin_top(10)
+                gw_info_box.add_css_class("sayri-info-banner")
+                gw_info_lbl = Gtk.Label()
+                gw_info_lbl.set_halign(Gtk.Align.START)
+                gw_info_lbl.set_wrap(True)
+                gw_info_lbl.set_markup(
+                    "<b>🛡️ Channel Gateway Security Isolation:</b><br/>"
+                    "This gateway does not have a static sandbox level. Its security isolation "
+                    "and command permissions are automatically and dynamically inherited from "
+                    "the <b>AI Agent</b> bound to each instance (in the <b>Gateways</b> tab)."
+                )
+                gw_info_box.append(gw_info_lbl)
+                box.append(gw_info_box)
+            else:
+                lbl_sb = Gtk.Label(label="Minimum Required Sandbox Level:")
+                lbl_sb.set_halign(Gtk.Align.START)
+                box.append(lbl_sb)
 
-            sb_options = [
-                ("LEVEL_0_NO_EXEC", "LEVEL_0: Pure Chat (Safe in Zero-Execution)"),
-                ("LEVEL_1_READONLY", "LEVEL_1: Sandbox L1 (Read-Only)"),
-                ("LEVEL_2_ISOLATED_DEV", "LEVEL_2: Sandbox L2 (Isolated Workspace)"),
-                ("LEVEL_3_HOST_USER", "LEVEL_3: Host L3 (Active Desktop User)"),
-            ]
-            sb_model = Gtk.StringList.new([opt[1] for opt in sb_options])
-            sb_drop = Gtk.DropDown.new(sb_model, None)
+                sb_options = [
+                    ("LEVEL_0_NO_EXEC", "LEVEL_0: Pure Chat (Safe in Zero-Execution)"),
+                    ("LEVEL_RESTRICTED_COMMANDS", "LEVEL_RESTRICTED: Specific Commands Only (UI Allowlist)"),
+                    ("LEVEL_1_READONLY", "LEVEL_1: Sandbox L1 (Read-Only)"),
+                    ("LEVEL_2_ISOLATED_DEV", "LEVEL_2: Sandbox L2 (Isolated Workspace)"),
+                    ("LEVEL_3_HOST_USER", "LEVEL_3: Host L3 (Active Desktop User)"),
+                ]
+                sb_model = Gtk.StringList.new([opt[1] for opt in sb_options])
+                sb_drop = Gtk.DropDown.new(sb_model, None)
 
-            cur_sb = plugin_data.get("min_sandbox_level", "LEVEL_1_READONLY")
-            for idx, opt in enumerate(sb_options):
-                if opt[0] == cur_sb:
-                    sb_drop.set_selected(idx)
-                    break
-            box.append(sb_drop)
+                cur_sb = plugin_data.get("min_sandbox_level", "LEVEL_1_READONLY")
+                for idx, opt in enumerate(sb_options):
+                    if opt[0] == cur_sb:
+                        sb_drop.set_selected(idx)
+                        break
+                box.append(sb_drop)
 
-            l0_check = Gtk.CheckButton(label="Allow execution in Level 0 (Zero-Execution) agents")
-            l0_check.set_active(plugin_data.get("allow_in_level_0", False))
-            box.append(l0_check)
+                l0_check = Gtk.CheckButton(label="Allow execution in Level 0 (Zero-Execution) agents")
+                l0_check.set_active(plugin_data.get("allow_in_level_0", False))
+                box.append(l0_check)
 
-            save_btn = Gtk.Button(label="Save Security Configuration")
-            save_btn.add_css_class("sayri-action-btn")
-            save_btn.add_css_class("primary")
+                save_btn = Gtk.Button(label="Save Security Configuration")
+                save_btn.add_css_class("sayri-action-btn")
+                save_btn.add_css_class("primary")
 
-            def _save(_b):
-                sel_sb = sb_options[sb_drop.get_selected()][0]
-                plugin_data["min_sandbox_level"] = sel_sb
-                plugin_data["allow_in_level_0"] = l0_check.get_active()
+                def _save(_b):
+                    sel_sb = sb_options[sb_drop.get_selected()][0]
+                    plugin_data["min_sandbox_level"] = sel_sb
+                    plugin_data["allow_in_level_0"] = l0_check.get_active()
 
-                for p_dir in [Path.home() / ".config" / "sayri" / "plugins" / pid, Path("/usr/share/sayri/plugins") / pid]:
-                    m_path = p_dir / "manifest.json"
-                    if m_path.is_file():
-                        try:
-                            m_json = json.loads(m_path.read_text(encoding="utf-8"))
-                            m_json["min_sandbox_level"] = sel_sb
-                            m_json["allow_in_level_0"] = l0_check.get_active()
-                            m_path.write_text(json.dumps(m_json, indent=2), encoding="utf-8")
-                        except Exception:
-                            pass
-                self._populate_plugins_tools()
-                self.switch_tab(on_back_tab)
+                    for p_dir in [Path.home() / ".config" / "sayri" / "plugins" / pid, Path("/usr/share/sayri/plugins") / pid]:
+                        m_path = p_dir / "manifest.json"
+                        if m_path.is_file():
+                            try:
+                                m_json = json.loads(m_path.read_text(encoding="utf-8"))
+                                m_json["min_sandbox_level"] = sel_sb
+                                m_json["allow_in_level_0"] = l0_check.get_active()
+                                m_path.write_text(json.dumps(m_json, indent=2), encoding="utf-8")
+                            except Exception:
+                                pass
+                    self._populate_plugins_tools()
+                    self.switch_tab(on_back_tab)
 
-            save_btn.connect("clicked", _save)
-            box.append(save_btn)
+                save_btn.connect("clicked", _save)
+                box.append(save_btn)
 
         self.open_subview(f"Configure {plugin_data.get('name', 'Plugin')}", _builder, on_back_tab=on_back_tab)
 
@@ -3278,15 +3301,18 @@ class SayriCajita(Gtk.Box):
         p_bin_row.set_margin_top(4)
 
         p_bin_lbl = Gtk.Label()
-        p_bin_lbl.set_markup(f"<span size='9000' foreground='{'#22c55e' if has_p_bin else '#94a3b8'}'>piper binary: {'✓ Installed' if has_p_bin else 'Not installed'}</span>")
+        p_bin_lbl.set_markup(f"<span size='9000' foreground='{'#22c55e' if has_p_bin else '#f59e0b'}'><b>Piper TTS Engine:</b> {'✓ Installed' if has_p_bin else 'Missing binary (Required for TTS)'}</span>")
         p_bin_lbl.set_halign(Gtk.Align.START)
         p_bin_lbl.set_hexpand(True)
         p_bin_row.append(p_bin_lbl)
 
-        dl_p_bin_btn = Gtk.Button(label="Installed" if has_p_bin else "Download Binary")
+        dl_p_bin_btn = Gtk.Button(label="Installed ✓" if has_p_bin else "Install Piper Binary")
         dl_p_bin_btn.add_css_class("sayri-action-btn")
         if not has_p_bin:
             dl_p_bin_btn.add_css_class("primary")
+            dl_p_bin_btn.set_sensitive(True)
+        else:
+            dl_p_bin_btn.set_sensitive(False)
 
         p_bin_prog = Gtk.ProgressBar()
         p_bin_prog.add_css_class("sayri-progress")
@@ -3309,9 +3335,10 @@ class SayriCajita(Gtk.Box):
                     downloads.install_piper(progress=_on_p_prog)
                     GLib.idle_add(lambda: (
                         p_bin_prog.set_visible(False),
-                        dl_p_bin_btn.set_label("Installed"),
+                        dl_p_bin_btn.set_label("Installed ✓"),
                         dl_p_bin_btn.remove_css_class("primary"),
-                        p_bin_lbl.set_markup("<span size='9000' foreground='#22c55e'>piper binary: ✓ Installed</span>")
+                        dl_p_bin_btn.set_sensitive(False),
+                        p_bin_lbl.set_markup("<span size='9000' foreground='#22c55e'><b>Piper TTS Engine:</b> ✓ Installed</span>")
                     ))
                 except Exception as exc:
                     GLib.idle_add(lambda: (
@@ -3417,6 +3444,41 @@ class SayriCajita(Gtk.Box):
 
             self.settings_box.append(u_card)
 
+        # Window & Overlay Behavior
+        wb_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        wb_card.add_css_class("sayri-card-item")
+        wb_card.set_margin_top(6)
+
+        wb_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        wb_row.set_valign(Gtk.Align.CENTER)
+
+        wb_lbl = Gtk.Label()
+        wb_lbl.set_markup("<span foreground='#ffffff' weight='700' size='9500'>Auto-hide on unfocus (Cerrar al pulsar fuera)</span>")
+        wb_lbl.set_halign(Gtk.Align.START)
+        wb_lbl.set_hexpand(True)
+        wb_row.append(wb_lbl)
+
+        wb_sw = Gtk.Switch()
+        wb_sw.set_valign(Gtk.Align.CENTER)
+        cur_autohide = cfg.get_bool("ui", "close_on_click_outside") if cfg else False
+        wb_sw.set_active(cur_autohide)
+
+        def _on_autohide_toggle(sw, _gparam):
+            if cfg:
+                cfg.set("ui", "close_on_click_outside", sw.get_active())
+
+        wb_sw.connect("notify::active", _on_autohide_toggle)
+        wb_row.append(wb_sw)
+        wb_card.append(wb_row)
+
+        wb_sub = Gtk.Label()
+        wb_sub.set_markup("<span foreground='#94a3b8' size='8500'>Automatically close or dismiss the Cajita window and overlay whenever clicking outside or switching focus to another app.</span>")
+        wb_sub.set_halign(Gtk.Align.START)
+        wb_sub.set_wrap(True)
+        wb_card.append(wb_sub)
+
+        self.settings_box.append(wb_card)
+
         # Section 5: System Daemons & Process Management
         sys_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         sys_box.add_css_class("sayri-card-item")
@@ -3438,59 +3500,8 @@ class SayriCajita(Gtk.Box):
         kill_btn.set_margin_top(4)
 
         def _kill_all_procs(_b):
-            from signal import SIGKILL
-
-            roots = set()
-            buf = {}
-            try:
-                for entry in os.listdir("/proc"):
-                    if not entry.isdigit():
-                        continue
-                    try:
-                        with open("/proc/" + entry + "/cmdline", "rb") as fh:
-                            raw = fh.read()
-                    except OSError:
-                        continue
-                    cmd = raw.replace(b"\0", b" ").decode("utf-8", "replace")
-                    buf[entry] = cmd
-                for pid, cmd in buf.items():
-                    low = (cmd or "").lower()
-                    if ("sayri" in low or "prismml" in low or "llama-server" in low
-                            or "llama-cli" in low or "llama-bench" in low):
-                        roots.add(pid)
-            except Exception:
-                pass
-
-            try:
-                out = subprocess.check_output(
-                    ["ps", "-eo", "pid=,ppid="], text=True, timeout=10
-                )
-                child = {}
-                for line in out.splitlines():
-                    parts = line.split()
-                    if len(parts) == 2:
-                        child.setdefault(parts[1], []).append(parts[0])
-            except Exception:
-                child = {}
-
-            kill = set(roots)
-            stack = list(roots)
-            while stack:
-                cur = stack.pop()
-                for sub in child.get(cur, []):
-                    if sub not in kill:
-                        kill.add(sub)
-                        stack.append(sub)
-            for pid in kill:
-                try:
-                    os.kill(int(pid), SIGKILL)
-                except (OSError, ValueError):
-                    pass
-            try:
-                subprocess.run(["systemctl", "--user", "stop", "app-sayri@autostart.service"],
-                               capture_output=True, timeout=10)
-            except Exception:
-                pass
+            from . import sysinfo
+            sysinfo.terminate_all_sayri(include_daemon=True, exclude_self=False)
             os._exit(0)
 
         kill_btn.connect("clicked", _kill_all_procs)
@@ -3623,28 +3634,31 @@ class SayriCajita(Gtk.Box):
             agent_drop = Gtk.DropDown.new(agent_model, None)
             box.append(agent_drop)
 
-            # 4. Sandbox Level
-            sb_lbl = Gtk.Label(label="Sandbox Security Level:")
-            sb_lbl.set_halign(Gtk.Align.START)
-            box.append(sb_lbl)
+            # Bound Agent Sandbox Indicator (Sandbox is coupled to the selected agent)
+            sb_info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            sb_info_box.set_margin_top(4)
+            sb_info_box.set_margin_bottom(6)
+            sb_info_lbl = Gtk.Label()
+            sb_info_lbl.set_halign(Gtk.Align.START)
+            sb_info_lbl.set_wrap(True)
+            sb_info_box.append(sb_info_lbl)
+            box.append(sb_info_box)
 
-            sb_levels = [
-                "LEVEL_1_READONLY (Read-Only Host + Temp)",
-                "LEVEL_0_NO_EXEC (Pure Conversation / No Exec)",
-                "LEVEL_2_ISOLATED_DEV (Read-Only Root + Workspace)",
-                "LEVEL_3_HOST_USER (Full User Host Execution)",
-            ]
-            sb_keys = [
-                "LEVEL_1_READONLY",
-                "LEVEL_0_NO_EXEC",
-                "LEVEL_2_ISOLATED_DEV",
-                "LEVEL_3_HOST_USER",
-            ]
-            sb_model = Gtk.StringList.new(sb_levels)
-            sb_drop = Gtk.DropDown.new(sb_model, None)
-            box.append(sb_drop)
+            def _update_add_gw_sb_info(*_):
+                idx = agent_drop.get_selected()
+                if 0 <= idx < len(agents):
+                    ag = agents[idx]
+                    lvl = ag.sandbox.level.value
+                    color = "#22c55e" if "READONLY" in lvl or "NO_EXEC" in lvl or "RESTRICTED" in lvl else "#f59e0b"
+                    sb_info_lbl.set_markup(
+                        f"🛡️ <b>Security Sandbox:</b> <span foreground='{color}' weight='600'>{lvl}</span> "
+                        f"<i>(Inherited from agent '{ag.name}')</i>"
+                    )
 
-            # 5. Bot Token / Secret
+            agent_drop.connect("notify::selected", _update_add_gw_sb_info)
+            _update_add_gw_sb_info()
+
+            # 4. Bot Token / Secret
             tok_lbl = Gtk.Label(label="Bot Token / API Secret:")
             tok_lbl.set_halign(Gtk.Align.START)
             box.append(tok_lbl)
@@ -3652,7 +3666,7 @@ class SayriCajita(Gtk.Box):
             tok_entry = Gtk.Entry()
             tok_entry.set_visibility(False)
             tok_entry.set_placeholder_text("Paste required bot token or API key…")
-            # 6. Session Continuity & Standby Inactivity Timeout
+            # 5. Session Continuity & Standby Inactivity Timeout
             resume_check = Gtk.CheckButton(label="🔄 Allow resuming / continuing previous conversations (/resume)")
             resume_check.set_active(True)
             resume_check.set_margin_top(4)
@@ -3690,12 +3704,11 @@ class SayriCajita(Gtk.Box):
             def _create(_b):
                 p_idx = plugin_drop.get_selected()
                 ag_idx = agent_drop.get_selected()
-                sb_idx = sb_drop.get_selected()
                 t_idx = timeout_drop.get_selected()
 
                 selected_plugin = installed_plugins[p_idx]
                 selected_agent = agents[ag_idx]
-                selected_sb = sb_keys[sb_idx]
+                selected_sb = selected_agent.sandbox.level.value
                 selected_timeout = timeout_values[t_idx] if 0 <= t_idx < len(timeout_values) else 30
 
                 import re, time
@@ -3766,31 +3779,31 @@ class SayriCajita(Gtk.Box):
             agent_drop.set_selected(cur_ag_idx)
             box.append(agent_drop)
 
-            # 3. Sandbox Level
-            sb_lbl = Gtk.Label(label="Sandbox Security Level:")
-            sb_lbl.set_halign(Gtk.Align.START)
-            box.append(sb_lbl)
+            # Bound Agent Sandbox Indicator (Sandbox is coupled to the selected agent)
+            sb_info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            sb_info_box.set_margin_top(4)
+            sb_info_box.set_margin_bottom(6)
+            sb_info_lbl = Gtk.Label()
+            sb_info_lbl.set_halign(Gtk.Align.START)
+            sb_info_lbl.set_wrap(True)
+            sb_info_box.append(sb_info_lbl)
+            box.append(sb_info_box)
 
-            sb_levels = [
-                "LEVEL_1_READONLY (Read-Only Host + Temp)",
-                "LEVEL_0_NO_EXEC (Pure Conversation / No Exec)",
-                "LEVEL_2_ISOLATED_DEV (Read-Only Root + Workspace)",
-                "LEVEL_3_HOST_USER (Full User Host Execution)",
-            ]
-            sb_keys = [
-                "LEVEL_1_READONLY",
-                "LEVEL_0_NO_EXEC",
-                "LEVEL_2_ISOLATED_DEV",
-                "LEVEL_3_HOST_USER",
-            ]
-            sb_model = Gtk.StringList.new(sb_levels)
-            sb_drop = Gtk.DropDown.new(sb_model, None)
-            cur_sb = instance_data.get("sandbox_level", "LEVEL_1_READONLY")
-            cur_sb_idx = next((i for i, k in enumerate(sb_keys) if k == cur_sb), 0)
-            sb_drop.set_selected(cur_sb_idx)
-            box.append(sb_drop)
+            def _update_edit_gw_sb_info(*_):
+                idx = agent_drop.get_selected()
+                if 0 <= idx < len(agents):
+                    ag = agents[idx]
+                    lvl = ag.sandbox.level.value
+                    color = "#22c55e" if "READONLY" in lvl or "NO_EXEC" in lvl or "RESTRICTED" in lvl else "#f59e0b"
+                    sb_info_lbl.set_markup(
+                        f"🛡️ <b>Security Sandbox:</b> <span foreground='{color}' weight='600'>{lvl}</span> "
+                        f"<i>(Inherited from agent '{ag.name}')</i>"
+                    )
 
-            # 4. Token
+            agent_drop.connect("notify::selected", _update_edit_gw_sb_info)
+            _update_edit_gw_sb_info()
+
+            # 3. Token
             sec_key = instance_data.get("secret_key") or f"TOKEN_{inst_id.upper().replace('-', '_')}"
             cur_tok = secrets_manager.get_secret(sec_key) or ""
             tok_lbl = Gtk.Label(label=f"Bot Token ({sec_key}):")
@@ -3804,7 +3817,7 @@ class SayriCajita(Gtk.Box):
             tok_entry.add_css_class("sayri-settings-entry")
             box.append(tok_entry)
 
-            # 5. Channel Guests Access (Kill Switch)
+            # 4. Channel Guests Access (Kill Switch)
             guests_check = Gtk.CheckButton(label="👥 Allow channel members to interact (Guest Access)")
             guests_val = instance_data.get("allow_channel_guests", False)
             auth_f = Path.home() / ".config" / "sayri" / f"authorizations_{inst_id}.json"
@@ -3819,7 +3832,7 @@ class SayriCajita(Gtk.Box):
             guests_check.set_margin_top(4)
             box.append(guests_check)
 
-            # 6. Session Continuity & Standby Inactivity Timeout
+            # 5. Session Continuity & Standby Inactivity Timeout
             resume_check = Gtk.CheckButton(label="🔄 Allow resuming / continuing previous conversations (/resume)")
             resume_check.set_active(instance_data.get("allow_resume_previous", True))
             resume_check.set_margin_top(4)
@@ -3848,11 +3861,10 @@ class SayriCajita(Gtk.Box):
 
             def _save(_b):
                 ag_idx = agent_drop.get_selected()
-                sb_idx = sb_drop.get_selected()
                 t_idx = timeout_drop.get_selected()
 
                 selected_agent = agents[ag_idx]
-                selected_sb = sb_keys[sb_idx]
+                selected_sb = selected_agent.sandbox.level.value
                 selected_timeout = timeout_values[t_idx] if 0 <= t_idx < len(timeout_values) else 30
                 new_tok = tok_entry.get_text().strip()
 
@@ -4210,14 +4222,22 @@ class SayriCajita(Gtk.Box):
 
     def _prompt_create_agent(self) -> None:
         dialog = Gtk.Window(title="Create Subagent")
-        dialog.set_default_size(360, 320)
+        dialog.set_default_size(480, 560)
         dialog.set_modal(True)
+        if hasattr(self, "window") and self.window:
+            dialog.set_transient_for(self.window)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        dialog.set_child(scroller)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(14)
-        box.set_margin_end(14)
+        box.set_margin_top(14)
+        box.set_margin_bottom(14)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        scroller.set_child(box)
 
         # Name
         lbl = Gtk.Label(label="Subagent Name:")
@@ -4225,7 +4245,7 @@ class SayriCajita(Gtk.Box):
         box.append(lbl)
         name_entry = Gtk.Entry()
         name_entry.add_css_class("sayri-settings-entry")
-        name_entry.set_placeholder_text("e.g. Code Reviewer, Research Assistant")
+        name_entry.set_placeholder_text("e.g. Discord Tasks, Code Reviewer")
         box.append(name_entry)
 
         # Role
@@ -4234,7 +4254,7 @@ class SayriCajita(Gtk.Box):
         box.append(lbl2)
         prompt_entry = Gtk.Entry()
         prompt_entry.add_css_class("sayri-settings-entry")
-        prompt_entry.set_placeholder_text("e.g. You are a senior software engineer assisting with code analysis.")
+        prompt_entry.set_placeholder_text("e.g. Summarize discussions and create proposals with gh.")
         box.append(prompt_entry)
 
         # Sandbox DropDown & Dynamic Security Indicator
@@ -4244,6 +4264,7 @@ class SayriCajita(Gtk.Box):
 
         sb_options = [
             ("LEVEL_0_NO_EXEC", "LEVEL_0: Pure Chat (No Execution / Maximum Safety)"),
+            ("LEVEL_RESTRICTED_COMMANDS", "LEVEL_RESTRICTED: Specific Commands Only (UI Allowlist)"),
             ("LEVEL_1_READONLY", "LEVEL_1: Sandbox L1 (Read-Only FS / Ephemeral Tmp)"),
             ("LEVEL_2_ISOLATED_DEV", "LEVEL_2: Sandbox L2 (Isolated Workspace)"),
             ("LEVEL_3_HOST_USER", "LEVEL_3: Host L3 (Active Desktop User)"),
@@ -4251,8 +4272,19 @@ class SayriCajita(Gtk.Box):
         ]
         sb_model = Gtk.StringList.new([opt[1] for opt in sb_options])
         sb_drop = Gtk.DropDown.new(sb_model, None)
-        sb_drop.set_selected(0)
+        sb_drop.set_selected(1)  # Default to restricted commands or safe mode
         box.append(sb_drop)
+
+        # Allowed Commands Allowlist (for LEVEL_RESTRICTED_COMMANDS)
+        lbl_cmds = Gtk.Label(label="Allowed Commands Allowlist:")
+        lbl_cmds.set_halign(Gtk.Align.START)
+        box.append(lbl_cmds)
+
+        cmds_entry = Gtk.Entry()
+        cmds_entry.set_text("gh *, git *")
+        cmds_entry.set_placeholder_text("e.g. gh *, git status, echo * (comma-separated)")
+        cmds_entry.add_css_class("sayri-settings-entry")
+        box.append(cmds_entry)
 
         # Dynamic Sandbox Feedback Banner
         sb_banner = Gtk.Label()
@@ -4264,14 +4296,20 @@ class SayriCajita(Gtk.Box):
         def _update_sb_banner(*_):
             idx = sb_drop.get_selected()
             lvl = sb_options[idx][0]
+            is_restricted = (lvl == "LEVEL_RESTRICTED_COMMANDS")
+            lbl_cmds.set_visible(is_restricted)
+            cmds_entry.set_visible(is_restricted)
+
             if lvl == "LEVEL_0_NO_EXEC":
-                sb_banner.set_markup("<span foreground='#22c55e'>🔒 <b>Zero-Execution Sandbox:</b> Pure conversational assistant. All plugin execution and bash commands are strictly blocked to eliminate escape risks.</span>")
+                sb_banner.set_markup("<span foreground='#22c55e'>🔒 <b>Zero-Execution Sandbox:</b> Pure conversational assistant. All plugin execution and bash commands are strictly blocked.</span>")
+            elif lvl == "LEVEL_RESTRICTED_COMMANDS":
+                sb_banner.set_markup("<span foreground='#38bdf8'>🎯 <b>Restricted Commands Sandbox:</b> Agent can ONLY execute the specific commands or patterns in the allowlist above. All other commands are blocked.</span>")
             elif lvl == "LEVEL_1_READONLY":
                 sb_banner.set_markup("<span foreground='#38bdf8'>🛡️ <b>Read-Only Sandbox:</b> File system is read-only. Plugins cannot modify user files or launch host desktop apps.</span>")
             elif lvl == "LEVEL_2_ISOLATED_DEV":
                 sb_banner.set_markup("<span foreground='#38bdf8'>📦 <b>Isolated Workspace:</b> Agent can only create files inside its designated workspace directory.</span>")
             else:
-                sb_banner.set_markup("<span foreground='#f59e0b'>⚠️ <b>Host Execution:</b> Agent has access to the user's host environment.</span>")
+                sb_banner.set_markup("<span foreground='#f59e0b'>⚠️ <b>Host Execution:</b> Direct execution on the user's host environment.</span>")
 
         sb_drop.connect("notify::selected", _update_sb_banner)
         _update_sb_banner()
@@ -4322,6 +4360,13 @@ class SayriCajita(Gtk.Box):
         pref_row.append(pref_switch)
         box.append(pref_row)
 
+        # Inline Error Label
+        err_lbl = Gtk.Label()
+        err_lbl.set_halign(Gtk.Align.START)
+        err_lbl.set_wrap(True)
+        err_lbl.set_visible(False)
+        box.append(err_lbl)
+
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.END)
         btn_box.set_margin_top(8)
@@ -4336,43 +4381,72 @@ class SayriCajita(Gtk.Box):
         save_b.add_css_class("primary")
 
         def _save(_):
+            err_lbl.set_visible(False)
             n = name_entry.get_text().strip()
             p = prompt_entry.get_text().strip()
-            if n:
-                sel_sb_idx = sb_drop.get_selected()
-                sb_level_enum = getattr(SandboxLevel, sb_options[sel_sb_idx][0], SandboxLevel.LEVEL_0_NO_EXEC)
-                aid = re.sub(r"[^a-zA-Z0-9_\-]", "-", n.lower()).strip("-") or f"agent-{int(time.time())}"
-                profile = AgentProfile(
-                    id=aid,
-                    name=n,
-                    description=f"Created via Sayri Subagent Manager",
-                    system_prompt=p or f"You are {n}, an autonomous assistant for Sayri.",
-                    model=AgentModelConfig(model_name="default"),
-                    sandbox=SandboxConfig(level=sb_level_enum),
-                    investigation_loop=loop_switch.get_active(),
-                    reinforcement_learning=pref_switch.get_active(),
-                )
-                AgentCreator.save_agent(profile)
+            if not n:
+                err_lbl.set_markup("<span foreground='#ef4444'>⚠️ Please enter a subagent name.</span>")
+                err_lbl.set_visible(True)
+                return
+
+            sel_sb_idx = sb_drop.get_selected()
+            sb_level_enum = getattr(SandboxLevel, sb_options[sel_sb_idx][0], SandboxLevel.LEVEL_0_NO_EXEC)
+            aid = re.sub(r"[^a-zA-Z0-9_\-]", "-", n.lower()).strip("-") or f"agent-{int(time.time())}"
+            raw_cmds = cmds_entry.get_text().strip()
+            allowed_cmds = [c.strip() for c in raw_cmds.split(",") if c.strip()]
+
+            if sb_level_enum == SandboxLevel.LEVEL_RESTRICTED_COMMANDS and not allowed_cmds:
+                err_lbl.set_markup("<span foreground='#ef4444'>⚠️ Restricted commands sandbox requires at least one allowed command (e.g. 'gh *, git *').</span>")
+                err_lbl.set_visible(True)
+                return
+
+            profile = AgentProfile(
+                id=aid,
+                name=n,
+                description=f"Created via Sayri Subagent Manager",
+                system_prompt=p or f"You are {n}, an autonomous assistant for Sayri.",
+                model=AgentModelConfig(model_name="default"),
+                sandbox=SandboxConfig(level=sb_level_enum, allowed_binaries=allowed_cmds),
+                allowed_tools=[] if sb_level_enum == SandboxLevel.LEVEL_0_NO_EXEC else ["bash"],
+                allowed_commands=allowed_cmds,
+                investigation_loop=loop_switch.get_active(),
+                reinforcement_learning=pref_switch.get_active(),
+            )
+            try:
+                AgentCreator.save_agent(profile, caller_level=SandboxLevel.LEVEL_3_HOST_USER)
                 self._populate_agents()
-            dialog.close()
+                dialog.close()
+            except Exception as exc:
+                err_lbl.set_markup(f"<span foreground='#ef4444'>⚠️ Error saving subagent: {GLib.markup_escape_text(str(exc))}</span>")
+                err_lbl.set_visible(True)
 
         save_b.connect("clicked", _save)
+        name_entry.connect("activate", _save)
+        prompt_entry.connect("activate", _save)
+        cmds_entry.connect("activate", _save)
         btn_box.append(save_b)
 
         box.append(btn_box)
-        dialog.set_child(box)
         dialog.present()
 
     def _prompt_edit_agent(self, profile: AgentProfile) -> None:
         dialog = Gtk.Window(title=f"Agent Settings: {profile.name}")
-        dialog.set_default_size(400, 360)
+        dialog.set_default_size(480, 560)
         dialog.set_modal(True)
+        if hasattr(self, "window") and self.window:
+            dialog.set_transient_for(self.window)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        dialog.set_child(scroller)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(14)
-        box.set_margin_end(14)
+        box.set_margin_top(14)
+        box.set_margin_bottom(14)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        scroller.set_child(box)
 
         # Name
         lbl = Gtk.Label(label="Agent Name:")
@@ -4399,6 +4473,7 @@ class SayriCajita(Gtk.Box):
 
         sb_options = [
             ("LEVEL_0_NO_EXEC", "LEVEL_0: Pure Chat (No Execution / Maximum Safety)"),
+            ("LEVEL_RESTRICTED_COMMANDS", "LEVEL_RESTRICTED: Specific Commands Only (UI Allowlist)"),
             ("LEVEL_1_READONLY", "LEVEL_1: Sandbox L1 (Read-Only FS / Ephemeral Tmp)"),
             ("LEVEL_2_ISOLATED_DEV", "LEVEL_2: Sandbox L2 (Isolated Workspace)"),
             ("LEVEL_3_HOST_USER", "LEVEL_3: Host L3 (Active Desktop User)"),
@@ -4416,6 +4491,18 @@ class SayriCajita(Gtk.Box):
         sb_drop.set_selected(sel_idx)
         box.append(sb_drop)
 
+        # Allowed Commands Allowlist (for LEVEL_RESTRICTED_COMMANDS)
+        lbl_cmds = Gtk.Label(label="Allowed Commands Allowlist:")
+        lbl_cmds.set_halign(Gtk.Align.START)
+        box.append(lbl_cmds)
+
+        cmds_entry = Gtk.Entry()
+        existing_cmds = profile.allowed_commands or profile.sandbox.allowed_binaries or []
+        cmds_entry.set_text(", ".join(existing_cmds))
+        cmds_entry.set_placeholder_text("e.g. gh *, git status, echo * (comma-separated)")
+        cmds_entry.add_css_class("sayri-settings-entry")
+        box.append(cmds_entry)
+
         # Dynamic Sandbox Feedback Banner
         sb_banner = Gtk.Label()
         sb_banner.add_css_class("sayri-info-banner")
@@ -4426,8 +4513,14 @@ class SayriCajita(Gtk.Box):
         def _update_sb_banner(*_):
             idx = sb_drop.get_selected()
             lvl = sb_options[idx][0]
+            is_restricted = (lvl == "LEVEL_RESTRICTED_COMMANDS")
+            lbl_cmds.set_visible(is_restricted or bool(profile.allowed_commands))
+            cmds_entry.set_visible(is_restricted or bool(profile.allowed_commands))
+
             if lvl == "LEVEL_0_NO_EXEC":
                 sb_banner.set_markup("<span foreground='#22c55e'>🔒 <b>Zero-Execution Sandbox:</b> Pure conversational assistant. All plugin execution and bash commands are strictly blocked.</span>")
+            elif lvl == "LEVEL_RESTRICTED_COMMANDS":
+                sb_banner.set_markup("<span foreground='#38bdf8'>🎯 <b>Restricted Commands Sandbox:</b> Agent can ONLY execute the specific commands configured in the allowlist below. All other commands are blocked.</span>")
             elif lvl == "LEVEL_1_READONLY":
                 sb_banner.set_markup("<span foreground='#38bdf8'>🛡️ <b>Read-Only Sandbox:</b> File system is read-only. Plugins cannot modify user files or launch host desktop apps.</span>")
             elif lvl == "LEVEL_2_ISOLATED_DEV":
@@ -4484,6 +4577,13 @@ class SayriCajita(Gtk.Box):
         pref_row.append(pref_switch)
         box.append(pref_row)
 
+        # Inline Error Label
+        err_lbl = Gtk.Label()
+        err_lbl.set_halign(Gtk.Align.START)
+        err_lbl.set_wrap(True)
+        err_lbl.set_visible(False)
+        box.append(err_lbl)
+
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.END)
         btn_box.set_margin_top(8)
@@ -4498,30 +4598,52 @@ class SayriCajita(Gtk.Box):
         save_b.add_css_class("primary")
 
         def _save(_):
+            err_lbl.set_visible(False)
             new_name = name_entry.get_text().strip()
             new_prompt = prompt_entry.get_text().strip()
-            if new_name:
-                profile.name = new_name
+            if not new_name:
+                err_lbl.set_markup("<span foreground='#ef4444'>⚠️ Agent name cannot be empty.</span>")
+                err_lbl.set_visible(True)
+                return
+
+            profile.name = new_name
             profile.system_prompt = new_prompt or profile.system_prompt
             profile.custom_instructions = new_prompt
 
             sel_sb_idx = sb_drop.get_selected()
             profile.sandbox.level = getattr(SandboxLevel, sb_options[sel_sb_idx][0], profile.sandbox.level)
+            allowed_cmds = [c.strip() for c in cmds_entry.get_text().split(",") if c.strip()]
+
+            if profile.sandbox.level == SandboxLevel.LEVEL_RESTRICTED_COMMANDS and not allowed_cmds:
+                err_lbl.set_markup("<span foreground='#ef4444'>⚠️ Restricted commands sandbox requires at least one allowed command (e.g. 'gh *, git *').</span>")
+                err_lbl.set_visible(True)
+                return
+
+            profile.allowed_commands = allowed_cmds
+            profile.sandbox.allowed_binaries = allowed_cmds
             profile.investigation_loop = loop_switch.get_active()
             profile.reinforcement_learning = pref_switch.get_active()
+            if profile.sandbox.level != SandboxLevel.LEVEL_0_NO_EXEC and not profile.allowed_tools:
+                profile.allowed_tools = ["bash"]
 
-            AgentCreator.save_agent(profile)
-            if getattr(self.app, "active_agent", None) and self.app.active_agent.id == profile.id:
-                self.app.active_agent = profile
-                self.update_agent_badge(profile.name, profile.sandbox.level.value)
-            self._populate_agents()
-            dialog.close()
+            try:
+                AgentCreator.save_agent(profile, caller_level=SandboxLevel.LEVEL_3_HOST_USER)
+                if getattr(self.app, "active_agent", None) and self.app.active_agent.id == profile.id:
+                    self.app.active_agent = profile
+                    self.update_agent_badge(profile.name, profile.sandbox.level.value)
+                self._populate_agents()
+                dialog.close()
+            except Exception as exc:
+                err_lbl.set_markup(f"<span foreground='#ef4444'>⚠️ Error: {GLib.markup_escape_text(str(exc))}</span>")
+                err_lbl.set_visible(True)
 
         save_b.connect("clicked", _save)
+        name_entry.connect("activate", _save)
+        prompt_entry.connect("activate", _save)
+        cmds_entry.connect("activate", _save)
         btn_box.append(save_b)
 
         box.append(btn_box)
-        dialog.set_child(box)
         dialog.present()
 
     def _prompt_rename_session(self, session_id: str, current_title: str) -> None:

@@ -146,6 +146,34 @@ class CajitaSettingsWindow(Gtk.ApplicationWindow):
 
         self.set_child(container)
 
+        # Auto-hide on unfocus / click outside
+        self._was_active = False
+        self._just_shown = time.monotonic()
+
+        def _do_close():
+            if config.config.get_bool("ui", "close_on_click_outside"):
+                self.close()
+
+        def _on_active_changed(win, _param):
+            if win.is_active():
+                self._was_active = True
+                return
+            if not getattr(self, "_was_active", False):
+                if time.monotonic() - getattr(self, "_just_shown", 0.0) < 0.4:
+                    return
+            _do_close()
+
+        self.connect("notify::is-active", _on_active_changed)
+
+        focus_ctrl = Gtk.EventControllerFocus.new()
+        def _on_focus_leave(_ctrl):
+            if not getattr(self, "_was_active", False):
+                if time.monotonic() - getattr(self, "_just_shown", 0.0) < 0.4:
+                    return
+            _do_close()
+        focus_ctrl.connect("leave", _on_focus_leave)
+        self.add_controller(focus_ctrl)
+
 
 def _forward_to_running_overlay() -> bool:
     """If Sayri GTK overlay is already running, send IPC signal and return True."""
@@ -200,6 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     app = Gtk.Application(application_id="es.inled.sayri.settings")
 
     def _on_activate(gtk_app: Gtk.Application) -> None:
+        for w in gtk_app.get_windows():
+            if isinstance(w, CajitaSettingsWindow):
+                w.cajita.switch_tab(initial_tab, trigger_effect=False)
+                w.present()
+                return
         win = CajitaSettingsWindow(gtk_app, initial_tab=initial_tab)
         win.present()
 

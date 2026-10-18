@@ -23,6 +23,19 @@ if os.path.isdir(lib) and lib not in sys.path:
     sys.path.insert(0, lib)
 
 from sayri.gateway_supervisor import gateway_supervisor
+from sayri.domain.agent_creator import AgentCreator
+
+
+def _check_privilege() -> bool:
+    caller_level = os.environ.get("SAYRI_SANDBOX_LEVEL")
+    if caller_level and caller_level not in ("LEVEL_3_HOST_USER", "LEVEL_4_HOST_ROOT"):
+        print(
+            f"Security error: Self-configuration via 'sayri-gateway' is strictly forbidden "
+            f"from sandbox level '{caller_level}'. Self-configuration is only permitted at LEVEL_3_HOST_USER.",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def cmd_list(args):
@@ -34,6 +47,8 @@ def cmd_list(args):
 
 
 def cmd_save(args):
+    if not _check_privilege():
+        return 126
     if not args:
         print("Usage: sayri-gateway save <json-file|json-string>", file=sys.stderr)
         return 1
@@ -47,12 +62,19 @@ def cmd_save(args):
     if not inst_id:
         print("Error: instance 'id' is required", file=sys.stderr)
         return 1
+    # Bind sandbox level from agent profile (sandbox belongs to agent)
+    agent_id = data.get("agent_id", "default")
+    agent = AgentCreator.get_agent(agent_id)
+    if agent:
+        data["sandbox_level"] = agent.sandbox.level.value
     gateway_supervisor.save_instance(data)
-    print(f"✓ Gateway instance '{inst_id}' saved")
+    print(f"✓ Gateway instance '{inst_id}' saved (Sandbox: {data.get('sandbox_level')})")
     return 0
 
 
 def cmd_start(args):
+    if not _check_privilege():
+        return 126
     if not args:
         print("Usage: sayri-gateway start <id>", file=sys.stderr)
         return 1
@@ -67,6 +89,8 @@ def cmd_start(args):
 
 
 def cmd_stop(args):
+    if not _check_privilege():
+        return 126
     if not args:
         print("Usage: sayri-gateway stop <id>", file=sys.stderr)
         return 1
@@ -77,6 +101,8 @@ def cmd_stop(args):
 
 
 def cmd_delete(args):
+    if not _check_privilege():
+        return 126
     if not args:
         print("Usage: sayri-gateway delete <id>", file=sys.stderr)
         return 1

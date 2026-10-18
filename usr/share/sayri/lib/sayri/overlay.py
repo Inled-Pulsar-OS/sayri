@@ -108,6 +108,37 @@ class SayriOverlay:
 
         self.win.set_child(self.hbox)
 
+        # Auto-hide on unfocus / click outside
+        self._was_active = False
+
+        def _do_auto_hide() -> None:
+            cfg = getattr(self.app, "cfg", None)
+            if cfg and cfg.get_bool("ui", "close_on_click_outside"):
+                self._was_active = False
+                if hasattr(self, "cajita") and hasattr(self.cajita, "card_overlay"):
+                    self.cajita.card_overlay.set_visible(False)
+                self.hide()
+
+        def _on_overlay_active_changed(win, _param):
+            if win.is_active():
+                self._was_active = True
+                return
+            if not getattr(self, "_was_active", False):
+                if time.monotonic() - getattr(self, "_just_shown", 0.0) < 0.4:
+                    return
+            _do_auto_hide()
+
+        self.win.connect("notify::is-active", _on_overlay_active_changed)
+
+        focus_ctrl = Gtk.EventControllerFocus.new()
+        def _on_focus_leave(_ctrl):
+            if not getattr(self, "_was_active", False):
+                if time.monotonic() - getattr(self, "_just_shown", 0.0) < 0.4:
+                    return
+            _do_auto_hide()
+        focus_ctrl.connect("leave", _on_focus_leave)
+        self.win.add_controller(focus_ctrl)
+
     def _on_orb_message(self, text: str) -> None:
         try:
             msg = json.loads(text)

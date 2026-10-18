@@ -811,6 +811,8 @@ class RetroCompanionWindow:
         # GTK4 libraries already mapped and dies on the first window.
         env.pop("LD_PRELOAD", None)
         title = self.current_char or "Sayri"
+        if sysinfo.is_indicator_running():
+            return
         self._clear_stale_indicator()
         try:
             self._indicator_proc = subprocess.Popen(

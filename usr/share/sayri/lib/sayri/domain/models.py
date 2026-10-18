@@ -10,11 +10,12 @@ import uuid
 
 
 class SandboxLevel(str, Enum):
-    LEVEL_0_NO_EXEC = "LEVEL_0_NO_EXEC"          # Pure conversational / No commands allowed
-    LEVEL_1_READONLY = "LEVEL_1_READONLY"        # Read-only filesystem (/), ephemeral tmp
-    LEVEL_2_ISOLATED_DEV = "LEVEL_2_ISOLATED_DEV"# Read-only system, isolated workspace dir
-    LEVEL_3_HOST_USER = "LEVEL_3_HOST_USER"      # Normal user host execution ($HOME)
-    LEVEL_4_HOST_ROOT = "LEVEL_4_HOST_ROOT"      # Elevated via pkexec / Polkit
+    LEVEL_0_NO_EXEC = "LEVEL_0_NO_EXEC"                    # Pure conversational / No commands allowed
+    LEVEL_RESTRICTED_COMMANDS = "LEVEL_RESTRICTED_COMMANDS"# Specific allowed commands only (UI allowlist)
+    LEVEL_1_READONLY = "LEVEL_1_READONLY"                  # Read-only filesystem (/), ephemeral tmp
+    LEVEL_2_ISOLATED_DEV = "LEVEL_2_ISOLATED_DEV"          # Read-only system, isolated workspace dir
+    LEVEL_3_HOST_USER = "LEVEL_3_HOST_USER"                # Normal user host execution ($HOME)
+    LEVEL_4_HOST_ROOT = "LEVEL_4_HOST_ROOT"                # Elevated via pkexec / Polkit
 
 
 class ToolCallStatus(str, Enum):
@@ -117,6 +118,11 @@ class AgentProfile:
     # bounds execution). A non-empty list names the only tools to use.
     allowed_tools: List[str] = field(default_factory=list)
     custom_instructions: str = ""
+    # Command allowlist/denylist for this agent (opt-in). If allowed_commands is
+    # non-empty, only those commands/patterns are permitted. If blocked_commands
+    # is non-empty, those are explicitly denied. Empty lists mean no filter.
+    allowed_commands: List[str] = field(default_factory=list)
+    blocked_commands: List[str] = field(default_factory=list)
     # Both are opt-in. With the loop on, the agent searches the host and the
     # web for how to do something before doing it, and retries failures. That
     # is the right behaviour when asked to carry out a task, and the wrong one
