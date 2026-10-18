@@ -25,48 +25,60 @@ CLAWHUB_RAW_BASE = "https://raw.githubusercontent.com/openclaw/skills/main"
 
 
 def list_skills() -> list[dict[str, Any]]:
-    """List all locally installed skills in ~/.config/sayri/skills/."""
-    skills_root = paths.skills_dir()
-    if not os.path.isdir(skills_root):
-        return []
+    """List all installed skills in ~/.config/sayri/skills/ and /usr/share/sayri/skills/."""
+    search_dirs = [paths.skills_dir()]
+    if hasattr(paths, "shared_skills_dir"):
+        search_dirs.append(paths.shared_skills_dir())
 
+    seen = set()
     result = []
-    for entry in sorted(os.listdir(skills_root)):
-        entry_path = os.path.join(skills_root, entry)
-        if not os.path.isdir(entry_path):
+    for s_dir in search_dirs:
+        if not os.path.isdir(s_dir):
             continue
-        skill_file = os.path.join(entry_path, "SKILL.md")
-        desc = ""
-        if os.path.isfile(skill_file):
-            try:
-                with open(skill_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line_s = line.strip()
-                        if line_s.startswith("description:"):
-                            desc = line_s.split("description:", 1)[1].strip(" \"'")
-                            break
-                        elif line_s and not line_s.startswith(("#", "---", "name:")) and not desc:
-                            desc = line_s
-            except Exception:
-                pass
-        result.append({
-            "name": entry,
-            "path": entry_path,
-            "skill_file": skill_file if os.path.isfile(skill_file) else None,
-            "description": desc or "Installed skill",
-        })
+        for entry in sorted(os.listdir(s_dir)):
+            if entry in seen:
+                continue
+            entry_path = os.path.join(s_dir, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            skill_file = os.path.join(entry_path, "SKILL.md")
+            desc = ""
+            if os.path.isfile(skill_file):
+                try:
+                    with open(skill_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line_s = line.strip()
+                            if line_s.startswith("description:"):
+                                desc = line_s.split("description:", 1)[1].strip(" \"'")
+                                break
+                            elif line_s and not line_s.startswith(("#", "---", "name:")) and not desc:
+                                desc = line_s
+                except Exception:
+                    pass
+            seen.add(entry)
+            result.append({
+                "name": entry,
+                "path": entry_path,
+                "skill_file": skill_file if os.path.isfile(skill_file) else None,
+                "description": desc or "Installed skill",
+            })
     return result
 
 
 def read_skill(name: str) -> Optional[str]:
-    """Read the full SKILL.md of an installed skill."""
-    skill_file = os.path.join(paths.skills_dir(), name, "SKILL.md")
-    if os.path.isfile(skill_file):
-        try:
-            with open(skill_file, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception as exc:
-            return f"Error reading skill {name}: {exc}"
+    """Read the full SKILL.md of an installed skill (user config or system shared)."""
+    search_dirs = [paths.skills_dir()]
+    if hasattr(paths, "shared_skills_dir"):
+        search_dirs.append(paths.shared_skills_dir())
+
+    for s_dir in search_dirs:
+        skill_file = os.path.join(s_dir, name, "SKILL.md")
+        if os.path.isfile(skill_file):
+            try:
+                with open(skill_file, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception as exc:
+                return f"Error reading skill {name}: {exc}"
     return None
 
 

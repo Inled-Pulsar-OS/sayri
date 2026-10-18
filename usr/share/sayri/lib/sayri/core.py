@@ -566,11 +566,23 @@ class SayriCore:
                 ]
                 agent_idx = levels_order.index(agent_profile.sandbox.level) if agent_profile.sandbox.level in levels_order else 4
                 req_idx = levels_order.index(lvl_enum) if lvl_enum in levels_order else 4
+                allow_owner_host = self.cfg.get_boolean("security", "gateway_owner_host_mode") if hasattr(self, "cfg") and self.cfg else True
                 if req_idx < agent_idx:
                     agent_profile = copy.deepcopy(agent_profile)
                     agent_profile.sandbox.level = lvl_enum
+                elif lvl_enum == SandboxLevel.LEVEL_3_HOST_USER and allow_owner_host:
+                    agent_profile = copy.deepcopy(agent_profile)
+                    agent_profile.sandbox.level = SandboxLevel.LEVEL_3_HOST_USER
             except Exception:
                 pass
+
+        if agent_profile.sandbox.level == SandboxLevel.LEVEL_RESTRICTED_COMMANDS:
+            allowed = list(getattr(agent_profile, "allowed_commands", []) or agent_profile.sandbox.allowed_binaries or [])
+            if not any("sayri-memory" in cmd for cmd in allowed):
+                agent_profile = copy.deepcopy(agent_profile)
+                allowed.append("sayri-memory *")
+                agent_profile.allowed_commands = allowed
+                agent_profile.sandbox.allowed_binaries = allowed
 
         if not session_id:
             inst_tag = f"-{instance_id}" if instance_id else ""

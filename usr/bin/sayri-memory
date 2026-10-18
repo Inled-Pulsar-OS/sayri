@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""sayri-memory: Secure markdown memory and agenda orchestrator for Sayri.
+
+Allows agents running under strict isolation (LEVEL_RESTRICTED_COMMANDS)
+to read, write, append, and organize personal ideas and tomorrow's reminders
+strictly within ~/.config/sayri/memory/ with zero access to the host filesystem.
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def get_memory_dir() -> Path:
+    """Returns ~/.config/sayri/memory/ or environment override."""
+    override = os.environ.get("SAYRI_MEMORY_DIR")
+    if override:
+        p = Path(override).expanduser().resolve()
+    else:
+        p = Path.home() / ".config" / "sayri" / "memory"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def validate_filename(name: str) -> str:
+    """Enforces strict filename security (no directory traversal, .md extension only)."""
+    clean_name = os.path.basename(name.strip())
+    if not clean_name.endswith(".md"):
+        clean_name += ".md"
+    if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", clean_name):
+        raise ValueError(
+            f"Invalid filename '{name}'. Memory notes must be alphanumeric with dashes/underscores and end with .md"
+        )
+    return clean_name
+
+
+def add_idea(text: str) -> None:
+    if not text.strip():
+        print("Error: Empty idea content.", file=sys.stderr)
+        sys.exit(1)
+    mem_dir = get_memory_dir()
+    ideas_file = mem_dir / "ideas.md"
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    if not ideas_file.is_file():
+        ideas_file.write_text("# 💡 Ideas & Thoughts Memory Journal\n\n", encoding="utf-8")
+
+    entry = f"- [ ] **[{now_str}]** {text.strip()}\n"
+    with open(ideas_file, "a", encoding="utf-8") as f:
+        f.write(entry)
+    print(f"✓ Idea recorded in {ideas_file.name}: {text.strip()}")
+
+
+def get_ideas() -> None:
+    mem_dir = get_memory_dir()
+    ideas_file = mem_dir / "ideas.md"
+    if not ideas_file.is_file() or not ideas_file.read_text(encoding="utf-8").strip():
+        print("No ideas recorded yet in memory.")
+        return
+    print(ideas_file.read_text(encoding="utf-8").strip())
+
+
+def add_tomorrow(text: str) -> None:
+    if not text.strip():
+        print("Error: Empty task or reminder content.", file=sys.stderr)
+        sys.exit(1)
+    mem_dir = get_memory_dir()
+    tomorrow_file = mem_dir / "tomorrow.md"
+    tomorrow_date = (datetime.date.today() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+
+    if not tomorrow_file.is_file():
+        tomorrow_file.write_text(f"# 📅 Tomorrow Agenda & Reminders ({tomorrow_date})\n\n", encoding="utf-8")
+
+    entry = f"- [ ] {text.strip()}\n"
+    with open(tomorrow_file, "a", encoding="utf-8") as f:
+        f.write(entry)
+    print(f"✓ Task scheduled for tomorrow ({tomorrow_date}): {text.strip()}")
+
+
+def get_tomorrow() -> None:
+    mem_dir = get_memory_dir()
+    tomorrow_file = mem_dir / "tomorrow.md"
+    if not tomorrow_file.is_file() or not tomorrow_file.read_text(encoding="utf-8").strip():
+        print("No reminders or tasks scheduled for tomorrow yet.")
+        return
+    print(tomorrow_file.read_text(encoding="utf-8").strip())
+
+
+def write_file(filename: str, content: str, append_mode: bool = True) -> None:
+    safe_name = validate_filename(filename)
+    mem_dir = get_memory_dir()
+    target = mem_dir / safe_name
+    mode = "a" if append_mode else "w"
+    with open(target, mode, encoding="utf-8") as f:
+        f.write(content.rstrip() + "\n")
+    print(f"✓ {'Appended to' if append_mode else 'Saved'} {safe_name}")
+
+
+def read_file(filename: str) -> None:
+    safe_name = validate_filename(filename)
+    mem_dir = get_memory_dir()
+    target = mem_dir / safe_name
+    if not target.is_file():
+        print(f"File '{safe_name}' does not exist in memory journal.", file=sys.stderr)
+        sys.exit(1)
+    print(target.read_text(encoding="utf-8").strip())
+
+
+def list_files() -> None:
+    mem_dir = get_memory_dir()
+    files = sorted([f.name for f in mem_dir.glob("*.md")])
+    if not files:
+        print("No memory markdown notes recorded yet.")
+        return
+    print(f"Memory notes in {mem_dir}:")
+    for f in files:
+        print(f"  • {f}")
+
+
+def usage() -> None:
+    prog = os.path.basename(sys.argv[0])
+    print(f"""Usage: {prog} <command> [arguments...]
+
+Secure Markdown Memory Journal and Agenda Manager for Sayri.
+
+Commands:
+  add-idea <text>             Record a new idea to ideas.md
+  get-ideas                   List all recorded ideas
+  add-tomorrow <text>         Add a task or reminder for tomorrow to tomorrow.md
+  get-tomorrow                List tomorrow's scheduled tasks and agenda
+  write <file.md> <content>   Append markdown content to a specific memory note
+  overwrite <file.md> <cont>  Overwrite a memory note completely
+  read <file.md>              Read contents of a memory markdown note
+  list                        List all active memory markdown notes in memory journal
+
+Security:
+  Strictly sandboxed to ~/.config/sayri/memory/.
+  Path traversal and access outside the memory directory are strictly prohibited.
+""")
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        usage()
+        sys.exit(0)
+
+    cmd = sys.argv[1].lower().strip()
+    args = sys.argv[2:]
+
+    try:
+        if cmd in ("add-idea", "idea", "save-idea"):
+            if not args:
+                print("Error: Please provide the idea text.", file=sys.stderr)
+                sys.exit(1)
+            add_idea(" ".join(args))
+        elif cmd in ("get-ideas", "list-ideas", "ideas"):
+            get_ideas()
+        elif cmd in ("add-tomorrow", "tomorrow", "remind-tomorrow", "agenda-add"):
+            if not args:
+                print("Error: Please provide the task or reminder text for tomorrow.", file=sys.stderr)
+                sys.exit(1)
+            add_tomorrow(" ".join(args))
+        elif cmd in ("get-tomorrow", "list-tomorrow", "agenda"):
+            get_tomorrow()
+        elif cmd in ("write", "append"):
+            if len(args) < 2:
+                print("Error: Usage: write <file.md> <content>", file=sys.stderr)
+                sys.exit(1)
+            write_file(args[0], " ".join(args[1:]), append_mode=True)
+        elif cmd in ("overwrite", "set"):
+            if len(args) < 2:
+                print("Error: Usage: overwrite <file.md> <content>", file=sys.stderr)
+                sys.exit(1)
+            write_file(args[0], " ".join(args[1:]), append_mode=False)
+        elif cmd in ("read", "get", "cat"):
+            if not args:
+                print("Error: Please specify filename to read.", file=sys.stderr)
+                sys.exit(1)
+            read_file(args[0])
+        elif cmd in ("list", "ls"):
+            list_files()
+        elif cmd in ("--help", "-h", "help"):
+            usage()
+        else:
+            print(f"Unknown memory command: '{cmd}'. Run '{os.path.basename(sys.argv[0])} help' for usage.", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -215,26 +215,28 @@ class SayriApp(Gtk.Application):
         self._start_ipc_server()
         self._launch_indicator()
 
-        # Auto-start installed gateways with configured secrets
-        try:
-            from sayri.gateway_supervisor import gateway_supervisor
-            gateway_supervisor.auto_start_all()
-        except Exception as e:
-            print(f"[Sayri] Gateway supervisor auto-start notice: {e}")
+        # Auto-start installed gateways with configured secrets (only if headless daemon is not running)
+        from sayri.ipc import daemon_is_running
+        if not daemon_is_running():
+            try:
+                from sayri.gateway_supervisor import gateway_supervisor
+                gateway_supervisor.auto_start_all()
+            except Exception as e:
+                print(f"[Sayri] Gateway supervisor auto-start notice: {e}")
 
-        try:
-            from sayri import plugin_service
-            plugin_service.auto_start_services()
-        except Exception as e:
-            print(f"[Sayri] Plugin service auto-start notice: {e}")
+            try:
+                from sayri import plugin_service
+                plugin_service.auto_start_services()
+            except Exception as e:
+                print(f"[Sayri] Plugin service auto-start notice: {e}")
 
-        # Auto-start cron and automated routines
-        try:
-            from sayri.domain.cron_scheduler import cron_scheduler
-            cron_scheduler.app = self
-            cron_scheduler.start()
-        except Exception as e:
-            print(f"[Sayri] Cron scheduler startup notice: {e}")
+            # Auto-start cron and automated routines
+            try:
+                from sayri.domain.cron_scheduler import cron_scheduler
+                cron_scheduler.app = self
+                cron_scheduler.start()
+            except Exception as e:
+                print(f"[Sayri] Cron scheduler startup notice: {e}")
 
     def _launch_indicator(self) -> None:
         if hasattr(self, "_indicator_proc") and self._indicator_proc and self._indicator_proc.poll() is None:
@@ -422,13 +424,25 @@ class SayriApp(Gtk.Application):
                 ]
                 agent_idx = levels_order.index(agent_profile.sandbox.level) if agent_profile.sandbox.level in levels_order else 4
                 req_idx = levels_order.index(lvl_enum) if lvl_enum in levels_order else 4
+                allow_owner_host = self.cfg.get_boolean("security", "gateway_owner_host_mode") if hasattr(self, "cfg") and self.cfg else True
                 if req_idx < agent_idx:
                     agent_profile = copy.deepcopy(agent_profile)
                     agent_profile.sandbox.level = lvl_enum
+                elif lvl_enum == SandboxLevel.LEVEL_3_HOST_USER and allow_owner_host:
+                    agent_profile = copy.deepcopy(agent_profile)
+                    agent_profile.sandbox.level = SandboxLevel.LEVEL_3_HOST_USER
                 elif req_idx > agent_idx:
                     print(f"[Sayri Security] Blocked remote sandbox elevation attempt: {agent_profile.sandbox.level.value} -> {lvl_enum.value}")
             except Exception as exc:
                 print(f"[Sayri Remote] Could not set custom sandbox level {sandbox_level}: {exc}")
+
+        if agent_profile.sandbox.level == SandboxLevel.LEVEL_RESTRICTED_COMMANDS:
+            allowed = list(getattr(agent_profile, "allowed_commands", []) or agent_profile.sandbox.allowed_binaries or [])
+            if not any("sayri-memory" in cmd for cmd in allowed):
+                agent_profile = copy.deepcopy(agent_profile)
+                allowed.append("sayri-memory *")
+                agent_profile.allowed_commands = allowed
+                agent_profile.sandbox.allowed_binaries = allowed
 
         if not session_id:
             inst_tag = f"-{instance_id}" if instance_id else ""

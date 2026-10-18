@@ -3479,6 +3479,50 @@ class SayriCajita(Gtk.Box):
 
         self.settings_box.append(wb_card)
 
+        # Section: Security & Gateway Isolation Mode
+        sec_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sec_card.add_css_class("sayri-card-item")
+        sec_card.set_margin_top(6)
+
+        sec_title = Gtk.Label()
+        sec_title.set_markup("<span weight='700' size='9500' foreground='#10b981'>SECURITY &amp; GATEWAY ISOLATION</span>")
+        sec_title.set_halign(Gtk.Align.START)
+        sec_card.append(sec_title)
+
+        sec_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sec_row.set_valign(Gtk.Align.CENTER)
+
+        sec_lbl = Gtk.Label()
+        sec_lbl.set_markup("<span foreground='#ffffff' weight='700' size='9500'>Elevate Paired Owner to Host Mode</span>")
+        sec_lbl.set_halign(Gtk.Align.START)
+        sec_lbl.set_hexpand(True)
+        sec_row.append(sec_lbl)
+
+        cur_host_mode = cfg.get_boolean("security", "gateway_owner_host_mode") if cfg else True
+        host_sw = Gtk.Switch()
+        host_sw.set_active(cur_host_mode)
+        host_sw.set_valign(Gtk.Align.CENTER)
+
+        def _on_host_mode_toggle(switch, _param):
+            if cfg:
+                cfg.set_boolean("security", "gateway_owner_host_mode", switch.get_active())
+                cfg.save()
+
+        host_sw.connect("notify::active", _on_host_mode_toggle)
+        sec_row.append(host_sw)
+        sec_card.append(sec_row)
+
+        sec_sub = Gtk.Label()
+        sec_sub.set_markup(
+            "<span foreground='#94a3b8' size='8500'>When enabled, messages from the paired desktop owner run with full host user permissions (LEVEL_3_HOST_USER). "
+            "When disabled, gateway interactions run strictly in isolation mode (LEVEL_RESTRICTED_COMMANDS), allowing only sayri-memory markdown notes and blocking host file reads.</span>"
+        )
+        sec_sub.set_halign(Gtk.Align.START)
+        sec_sub.set_wrap(True)
+        sec_card.append(sec_sub)
+
+        self.settings_box.append(sec_card)
+
         # Section 5: System Daemons & Process Management
         sys_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         sys_box.add_css_class("sayri-card-item")

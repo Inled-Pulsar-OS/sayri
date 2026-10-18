@@ -346,6 +346,12 @@ class GatewaySupervisor:
                 **sysinfo.spawn_flags(),
             )
             self._processes[instance_id] = proc
+            pid_file = Path(paths.config_dir()) / f"gateway_{instance_id}.pid"
+            try:
+                pid_file.parent.mkdir(parents=True, exist_ok=True)
+                pid_file.write_text(str(proc.pid), encoding="utf-8")
+            except Exception:
+                pass
             print(f"[Supervisor] 🚀 Started gateway instance '{inst.get('name')}' ({instance_id}, PID: {proc.pid}) -> Agent: {inst.get('agent_id')}, Sandbox: {inst.get('sandbox_level')}")
             return True, f"Started gateway instance '{inst.get('name')}' (PID: {proc.pid})"
         except Exception as e:
@@ -416,6 +422,8 @@ class GatewaySupervisor:
         try:
             for inst in self.list_instances():
                 if not inst.get("enabled", True):
+                    continue
+                if self.is_instance_running(inst["id"]):
                     continue
                 sec_key = inst.get("secret_key", "")
                 if sec_key:

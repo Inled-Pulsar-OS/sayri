@@ -84,6 +84,16 @@ def skills_dir() -> str:
     return os.path.join(config_dir(), "skills")
 
 
+def shared_skills_dir() -> str:
+    """System-wide skills directory (/usr/share/sayri/skills on Linux)."""
+    return os.path.join(sysinfo.shared_root_dir(), "skills")
+
+
+def memory_dir() -> str:
+    """Directory for safe markdown memory notes, ideas, and agenda."""
+    return os.path.join(config_dir(), "memory")
+
+
 def agents_dir() -> str:
     return os.path.join(config_dir(), "agents")
 
