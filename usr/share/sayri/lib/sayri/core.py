@@ -133,7 +133,8 @@ class SayriCore:
             id="default",
             name="Main Sayri",
             description="Operating system assistant for Pulsar OS",
-            system_prompt="You are Sayri, the intelligent assistant of Pulsar OS.",
+            system_prompt="You are Sayri, the intelligent autonomous personal AI assistant of Pulsar OS. Act autonomously using your tools and bash commands to fulfill user tasks without stopping prematurely.",
+            investigation_loop=True,
         )
         self.active_session_id = self.storage.create_session(agent_id=self.active_agent.id).id
 

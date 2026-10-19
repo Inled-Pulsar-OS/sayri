@@ -141,7 +141,7 @@ class AgentCreator:
                     custom_instructions=data.get("custom_instructions", ""),
                     allowed_commands=data.get("allowed_commands", []),
                     blocked_commands=data.get("blocked_commands", []),
-                    investigation_loop=bool(data.get("investigation_loop", False)),
+                    investigation_loop=bool(data.get("investigation_loop", True if is_def else False)),
                     reinforcement_learning=bool(data.get("reinforcement_learning", False)),
                     created_at=data.get("created_at", time.time()),
                     is_builtin=is_def,
