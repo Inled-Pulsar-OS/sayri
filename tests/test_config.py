@@ -21,6 +21,10 @@ def test_defaults():
     assert cfg.get_int("provider", "max_tokens") == 512
     assert cfg.get_float("provider", "temperature") == 0.7
     assert cfg.get_int("ui", "orb_size") == 140
+    assert cfg.get_bool("ui", "close_on_click_outside") is True
+    assert cfg.get_bool("api", "enabled") is True
+    assert cfg.get_string("api", "host") == "0.0.0.0"
+    assert cfg.get_int("api", "port") == 8765
 
 
 def test_set_get_roundtrip():

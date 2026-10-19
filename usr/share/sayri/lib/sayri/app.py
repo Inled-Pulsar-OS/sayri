@@ -238,6 +238,15 @@ class SayriApp(Gtk.Application):
             except Exception as e:
                 print(f"[Sayri] Cron scheduler startup notice: {e}")
 
+            # Auto-start remote API server
+            if self.cfg.get_bool("api", "enabled"):
+                try:
+                    from sayri.api_server import get_api_server
+                    self._api_server = get_api_server(self, self.cfg)
+                    self._api_server.start()
+                except Exception as e:
+                    print(f"[Sayri] API server startup notice: {e}")
+
     def _launch_indicator(self) -> None:
         if hasattr(self, "_indicator_proc") and self._indicator_proc and self._indicator_proc.poll() is None:
             return
@@ -368,6 +377,7 @@ class SayriApp(Gtk.Application):
         instance_id: Optional[str] = None,
         session_id: Optional[str] = None,
         conn: Optional[socket.socket] = None,
+        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> str:
         """Processes an incoming message from a channel gateway (Telegram/Discord) via AgentEngine."""
         import copy
@@ -375,6 +385,11 @@ class SayriApp(Gtk.Application):
         result_holder = {"text": "", "error": None}
 
         def _send_event(event_dict: Dict[str, Any]) -> None:
+            if on_event:
+                try:
+                    on_event(event_dict)
+                except Exception:
+                    pass
             if conn:
                 try:
                     payload = json.dumps(event_dict) + "\n"
@@ -1192,6 +1207,12 @@ class SayriApp(Gtk.Application):
         self.quit()
 
     def _on_shutdown(self, _app) -> None:
+        if hasattr(self, "_api_server") and self._api_server:
+            try:
+                self._api_server.stop()
+            except Exception:
+                pass
+            self._api_server = None
         self._stop_session()
         self.tts.cancel()
         sound.stop_all()

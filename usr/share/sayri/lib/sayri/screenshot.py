@@ -87,37 +87,57 @@ def take_screenshot(dest_path: Optional[str] = None) -> str:
     except Exception:
         pass
 
-    # 2. Try gnome-screenshot
+    # 4. Try gnome-screenshot (with -p / --include-pointer)
     if shutil.which("gnome-screenshot"):
         try:
-            res = subprocess.run(["gnome-screenshot", "-f", dest_path], capture_output=True, timeout=8)
+            res = subprocess.run(["gnome-screenshot", "-p", "-f", dest_path], capture_output=True, timeout=8)
             if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
                 print(f"[Screenshot] ✓ Saved gnome-screenshot: {dest_path}")
                 return dest_path
         except Exception:
             pass
 
-    # 4. Try grim (standard Wayland)
+    # 5. Try grim (standard Wayland with -c / --cursor)
     if shutil.which("grim"):
         try:
-            res = subprocess.run(["grim", dest_path], capture_output=True, timeout=8)
+            res = subprocess.run(["grim", "-c", dest_path], capture_output=True, timeout=8)
             if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
                 print(f"[Screenshot] ✓ Saved grim screenshot: {dest_path}")
                 return dest_path
         except Exception:
             pass
 
-    # 5. Try spectacle (KDE)
+    # 6. Try spectacle (KDE with -c / --include-pointer)
     if shutil.which("spectacle"):
         try:
-            res = subprocess.run(["spectacle", "-b", "-n", "-o", dest_path], capture_output=True, timeout=8)
+            res = subprocess.run(["spectacle", "-c", "-b", "-n", "-o", dest_path], capture_output=True, timeout=8)
             if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
                 print(f"[Screenshot] ✓ Saved spectacle screenshot: {dest_path}")
                 return dest_path
         except Exception:
             pass
 
-    # 6. Try ImageMagick import (X11)
+    # 7. Try scrot (X11 with -p / pointer)
+    if shutil.which("scrot") and os.environ.get("DISPLAY"):
+        try:
+            res = subprocess.run(["scrot", "-p", dest_path], capture_output=True, timeout=8)
+            if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                print(f"[Screenshot] ✓ Saved scrot screenshot: {dest_path}")
+                return dest_path
+        except Exception:
+            pass
+
+    # 8. Try maim (X11)
+    if shutil.which("maim") and os.environ.get("DISPLAY"):
+        try:
+            res = subprocess.run(["maim", dest_path], capture_output=True, timeout=8)
+            if res.returncode == 0 and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                print(f"[Screenshot] ✓ Saved maim screenshot: {dest_path}")
+                return dest_path
+        except Exception:
+            pass
+
+    # 9. Try ImageMagick import (X11)
     if shutil.which("import") and os.environ.get("DISPLAY"):
         try:
             res = subprocess.run(["import", "-window", "root", dest_path], capture_output=True, timeout=8)
@@ -127,7 +147,7 @@ def take_screenshot(dest_path: Optional[str] = None) -> str:
         except Exception:
             pass
 
-    raise RuntimeError(f"Could not take screenshot: no supported tool found (gnome-screenshot, grim, spectacle, import)")
+    raise RuntimeError(f"Could not take screenshot: no supported tool found (gnome-screenshot, grim, spectacle, scrot, maim, import)")
 
 
 def main() -> int:

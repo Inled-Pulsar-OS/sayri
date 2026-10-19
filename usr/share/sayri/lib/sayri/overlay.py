@@ -112,8 +112,10 @@ class SayriOverlay:
         self._was_active = False
 
         def _do_auto_hide() -> None:
+            if hasattr(self.app, "_settings_proc") and self.app._settings_proc and self.app._settings_proc.poll() is None:
+                return
             cfg = getattr(self.app, "cfg", None)
-            if cfg and cfg.get_bool("ui", "close_on_click_outside"):
+            if cfg is None or cfg.get_bool("ui", "close_on_click_outside"):
                 self._was_active = False
                 if hasattr(self, "cajita") and hasattr(self.cajita, "card_overlay"):
                     self.cajita.card_overlay.set_visible(False)

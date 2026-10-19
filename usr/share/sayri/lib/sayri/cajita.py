@@ -3460,7 +3460,7 @@ class SayriCajita(Gtk.Box):
 
         wb_sw = Gtk.Switch()
         wb_sw.set_valign(Gtk.Align.CENTER)
-        cur_autohide = cfg.get_bool("ui", "close_on_click_outside") if cfg else False
+        cur_autohide = cfg.get_bool("ui", "close_on_click_outside") if cfg else True
         wb_sw.set_active(cur_autohide)
 
         def _on_autohide_toggle(sw, _gparam):

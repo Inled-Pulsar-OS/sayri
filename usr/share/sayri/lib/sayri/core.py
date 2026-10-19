@@ -92,7 +92,14 @@ class CoreUI:
 class SayriCore:
     """Headless Sayri engine."""
 
+    _instance: Optional["SayriCore"] = None
+
+    @classmethod
+    def get_instance(cls) -> Optional["SayriCore"]:
+        return cls._instance
+
     def __init__(self, ui: Optional[CoreUI] = None, cfg=None) -> None:
+        SayriCore._instance = self
         self.cfg = cfg or config.config
         self.ui = ui or CoreUI()
 

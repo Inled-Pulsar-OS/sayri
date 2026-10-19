@@ -172,10 +172,16 @@ DEFAULTS: dict[str, dict[str, object]] = {
         "default_ui": "desktop",  # UI the launcher opens: "desktop", "orb" or a plugin id
         "autostart_mode": "ui",  # "ui" = UI + daemon at login | "daemon" = daemon only
         "setup_complete": False,  # set by the welcome wizard on first run
-        "close_on_click_outside": False,  # dismiss UI when clicking outside / losing focus
+        "close_on_click_outside": True,  # dismiss UI when clicking outside / losing focus
     },
     "security": {
         "gateway_owner_host_mode": True,  # When paired owner speaks via gateway, allow LEVEL_3_HOST_USER
+    },
+    "api": {
+        "enabled": True,
+        "host": "0.0.0.0",
+        "port": 8765,
+        "api_key": "",
     },
 }
 
@@ -221,6 +227,12 @@ _TYPES: dict[str, dict[str, str]] = {
     },
     "security": {
         "gateway_owner_host_mode": "bool",
+    },
+    "api": {
+        "enabled": "bool",
+        "host": "string",
+        "port": "int",
+        "api_key": "string",
     },
 }
 
@@ -278,22 +290,30 @@ class Config:
             if kind == "bool":
                 return self._kf.get_boolean(group, key)
         except Exception:
-            if default is not None:
-                return default
-            return DEFAULTS.get(group, {}).get(key, "")
-        return DEFAULTS.get(group, {}).get(key, default)
+            pass
+
+        if group in DEFAULTS and key in DEFAULTS[group]:
+            return DEFAULTS[group][key]
+        return default
 
     def get_string(self, group: str, key: str, default: str = "") -> str:
-        return str(self.get(group, key, default))
+        val = self.get(group, key, default)
+        return str(val) if val is not None else default
 
     def get_int(self, group: str, key: str, default: int = 0) -> int:
-        return int(self.get(group, key, default))
+        val = self.get(group, key, default)
+        return int(val) if val is not None else default
 
     def get_float(self, group: str, key: str, default: float = 0.0) -> float:
-        return float(self.get(group, key, default))
+        val = self.get(group, key, default)
+        return float(val) if val is not None else default
 
     def get_bool(self, group: str, key: str, default: bool = False) -> bool:
-        return bool(self.get(group, key, default))
+        val = self.get(group, key, default)
+        return bool(val) if val is not None else default
+
+    def get_boolean(self, group: str, key: str, default: bool = False) -> bool:
+        return self.get_bool(group, key, default)
 
     def is_plugin_enabled(self, plugin_id: str) -> bool:
         try:

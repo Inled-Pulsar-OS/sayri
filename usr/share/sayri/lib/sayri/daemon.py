@@ -1290,6 +1290,14 @@ class SayriDaemon:
         except Exception as exc:  # noqa: BLE001
             print(f"[sayri-daemon] cron scheduler notice: {exc}")
 
+        if getattr(self.core, "cfg", None) and self.core.cfg.get_bool("api", "enabled"):
+            try:
+                from sayri.api_server import get_api_server
+                self._api_server = get_api_server(self.core, self.core.cfg)
+                self._api_server.start()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[sayri-daemon] api server notice: {exc}")
+
     # ---------------------------------------------------------------- run
     def start(self, start_services: bool = True) -> bool:
         if not self.server.start():
@@ -1311,6 +1319,12 @@ class SayriDaemon:
             self.stop()
 
     def stop(self) -> None:
+        if hasattr(self, "_api_server") and self._api_server:
+            try:
+                self._api_server.stop()
+            except Exception:
+                pass
+            self._api_server = None
         self._legacy_running = False
         if self._legacy_sock is not None:
             try:
