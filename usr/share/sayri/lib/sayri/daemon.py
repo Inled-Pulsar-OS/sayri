@@ -1290,7 +1290,7 @@ class SayriDaemon:
         except Exception as exc:  # noqa: BLE001
             print(f"[sayri-daemon] cron scheduler notice: {exc}")
 
-        if getattr(self.core, "cfg", None) and self.core.cfg.get_bool("api", "enabled"):
+        if getattr(self.core, "cfg", None) and self.core.cfg.get_bool("api", "enabled", True):
             try:
                 from sayri.api_server import get_api_server
                 self._api_server = get_api_server(self.core, self.core.cfg)

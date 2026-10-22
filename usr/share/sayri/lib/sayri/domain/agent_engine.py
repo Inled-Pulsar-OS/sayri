@@ -23,6 +23,13 @@ from sayri.domain.models import (
 )
 
 
+def strip_base64_images(text: str) -> str:
+    """Strips massive raw base64 data URLs to prevent context window overflow."""
+    if not text or "data:image/" not in text:
+        return text
+    return re.sub(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", "[Image attached]", text)
+
+
 def strip_unwanted_patterns(text: str, patterns_cfg: str) -> str:
     """Removes configured thinking tags or custom phrases from the LLM text output."""
     if not text:
@@ -276,7 +283,8 @@ class AgentEngine:
             "1. If you need to perform an action or investigation on the system, emit a block:\n"
             "```bash\n<command>\n```\n"
             "2. ABSOLUTE TRUTHFULNESS: NEVER claim an application has opened or an action has completed unless the system observation confirms exit code 0 with no errors.\n"
-            "3. Always respond in the language the user spoke to you in, naturally, concisely and pleasantly (1 to 3 spoken sentences for voice)."
+            "3. Always respond in the language the user spoke to you in, naturally, concisely and pleasantly (1 to 3 spoken sentences for voice).\n"
+            "4. VISION / IMAGES: You are currently running on a fast local text model without direct image perception. If the user attaches an image or photo, or if you see [Photo attached by user] or [Image attached], gracefully explain that visual image processing is not active on this model, and offer to assist with any questions or text descriptions."
         )
         return base
 
@@ -306,8 +314,9 @@ class AgentEngine:
             agent_id=profile.id, title=user_text[:30], session_id=session_id
         )
 
-        user_msg = Message(role="user", content=user_text)
+        user_msg = Message(role="user", content=strip_base64_images(user_text))
         self.storage.add_message(session.id, user_msg)
+        session.messages.append(user_msg)
 
         # 1. Natural Language Subagent Intent Detection & Non-Escalation Enforcement
         clean_prompt = user_text.strip().lower()
@@ -369,12 +378,45 @@ class AgentEngine:
             self._generate_session_title_async(session.id, user_text, cfg)
 
         # Prepare messages payload with token-efficient context window
-        system_prompt = self.build_system_prompt(profile)
+        installed_skills = skills.list_skills()
+        pc_skills_summary = ""
+        if installed_skills:
+            items = [f"- {s['name']}: {s.get('description', '')}" for s in installed_skills[:10]]
+            pc_skills_summary = "INSTALLED PC SKILLS & EXTENSIONS (accessible on host PC):\n" + "\n".join(items) + "\n\n"
+
+        if session_id.startswith("mobile-"):
+            system_prompt = (
+                "You are Sayri, the personal AI companion and mobile assistant on this Android smartphone (Sayri Mobile), connected with Pulsar OS on the user's PC.\n"
+                "DUAL ENVIRONMENT CAPABILITIES (Android Mobile + Pulsar OS PC):\n"
+                "1. You have seamless access and authority to control BOTH the Android Phone and the connected Host PC (Pulsar OS).\n"
+                "2. TO PERFORM ACTIONS ON THE ANDROID SMARTPHONE:\n"
+                "   - Launch ANY installed app: [ACTION: OPEN_APP <app_name_or_pkg>]\n"
+                "   - Click text on screen (OCR): [ACTION: CLICK_TEXT <text>]\n"
+                "   - Click coordinates: [ACTION: CLICK_COORDS <x> <y>]\n"
+                "   - Type text in fields: [ACTION: TYPE_TEXT <field_or_id> <text>]\n"
+                "   - Scroll screen: [ACTION: SCROLL up] or [ACTION: SCROLL down]\n"
+                "   - Use App Functions & App Intents (share, deeplinks, email, media): [ACTION: INTENT action=\"android.intent.action.SEND\" text=\"<msg>\" pkg=\"<optional_pkg>\"]\n"
+                "   - Hardware & system: [ACTION: FLASHLIGHT on|off], [ACTION: TIMER <sec> <label>], [ACTION: ALARM <HH:MM>], [ACTION: WEB <url>], [ACTION: NAVIGATE <dest>]\n"
+                "3. TO PERFORM ACTIONS ON THE HOST PC (PULSAR OS):\n"
+                "   - When the user asks to control the PC, play desktop music, inspect files, or run system tasks, emit a bash block:\n"
+                "     ```bash\n"
+                "     <command>\n"
+                "     ```\n"
+                f"{pc_skills_summary}"
+                "4. DUAL ROUTING LOGIC:\n"
+                "   - If the request is for the phone (e.g. open WhatsApp, flashlight, alarm, screen click), execute the mobile [ACTION: ...].\n"
+                "   - If the request is for the PC (e.g. open music in Amberol, terminal command, pc files), emit the bash command.\n"
+                "5. When an image or screen capture is provided, refer to the spatial OCR text map and coordinates to guide or interact with elements.\n"
+                "6. Always respond in the language the user spoke to you in (Spanish/English), friendly, concisely, and pleasantly."
+            )
+        else:
+            system_prompt = self.build_system_prompt(profile)
+
         all_past_msgs = session.messages
         
-        if len(all_past_msgs) > 4:
+        if len(all_past_msgs) > 6 and not session_id.startswith("mobile-"):
             # Compact older context summary to save tokens while keeping conversation state
-            older_msgs = all_past_msgs[:-4]
+            older_msgs = all_past_msgs[:-6]
             topics_summary = []
             for om in older_msgs[-8:]:
                 snippet = om.content.strip().replace("\n", " ")[:90]
@@ -390,14 +432,16 @@ class AgentEngine:
 
         messages = [{"role": "system", "content": system_prompt}]
 
-        recent_msgs = all_past_msgs[-4:] if len(all_past_msgs) > 4 else all_past_msgs
+        recent_msgs = all_past_msgs[-6:] if len(all_past_msgs) > 6 else all_past_msgs
         for m in recent_msgs:
             if m.role == "system":
                 continue
             role = "assistant" if m.role == "assistant" else "user"
-            messages.append({"role": role, "content": m.content})
+            clean_content = strip_base64_images(m.content)
+            messages.append({"role": role, "content": clean_content})
 
-        messages.append({"role": "user", "content": user_text})
+        if not messages or messages[-1].get("role") != "user":
+            messages.append({"role": "user", "content": strip_base64_images(user_text)})
 
         threading.Thread(
             target=self._react_loop,
@@ -783,6 +827,8 @@ class AgentEngine:
             # Final response (filter thinking tags / custom strip patterns)
             patterns_cfg = cfg.get_string("provider", "strip_patterns") if cfg else ""
             clean_reply = strip_unwanted_patterns(full_text, patterns_cfg)
+            if not clean_reply.strip() and full_text.strip():
+                clean_reply = full_text.strip()
             final_msg = Message(role="assistant", content=clean_reply)
             self.storage.add_message(session_id, final_msg)
             on_done(clean_reply)

@@ -782,6 +782,7 @@ class SayriCajita(Gtk.Box):
             ("skills", "Skills"),
             ("plugins", "Plugins"),
             ("gateways", "Gateways"),
+            ("mobile", "Mobile"),
             ("secrets", "Vault"),
             ("settings", "Settings"),
         ]:
@@ -1048,6 +1049,37 @@ class SayriCajita(Gtk.Box):
 
         self.card_stack.add_named(self.gateways_view, "gateways")
 
+        # ── View: Mobile Companion & Remote API ──
+        self.mobile_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        mob_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        mob_header.set_valign(Gtk.Align.CENTER)
+
+        mob_title = Gtk.Label()
+        mob_title.set_markup("<span weight='700' size='10500' foreground='#f8fafc'>MOBILE COMPANION &amp; PAIRING</span>")
+        mob_title.set_halign(Gtk.Align.START)
+        mob_title.set_hexpand(True)
+        mob_header.append(mob_title)
+        self.mobile_view.append(mob_header)
+
+        mob_banner = Gtk.Label()
+        mob_banner.add_css_class("sayri-info-banner")
+        mob_banner.set_markup(
+            "<b>Sayri Mobile Companion:</b> Pair your Android device via 6-digit PIN to enable remote voice assistant, offline STT (Dicio), and Circle to Search over your local network."
+        )
+        mob_banner.set_wrap(True)
+        mob_banner.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.mobile_view.append(mob_banner)
+
+        self.mobile_scroll = Gtk.ScrolledWindow()
+        self.mobile_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.mobile_scroll.set_propagate_natural_height(True)
+        self.mobile_scroll.set_max_content_height(260)
+        self.mobile_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.mobile_scroll.set_child(self.mobile_box)
+        self.mobile_view.append(self.mobile_scroll)
+
+        self.card_stack.add_named(self.mobile_view, "mobile")
+
         # ── View 7: Zero-Plaintext Secrets Vault ──
         self.secrets_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         sec_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1273,6 +1305,8 @@ class SayriCajita(Gtk.Box):
             self._populate_plugins_tools()
         elif tab_id == "gateways":
             self._populate_gateways()
+        elif tab_id == "mobile":
+            self._populate_mobile()
         elif tab_id == "routines":
             self._populate_routines()
         elif tab_id == "secrets":
@@ -2556,6 +2590,177 @@ class SayriCajita(Gtk.Box):
         self._populate_plugins_tools()
         self._populate_gateways()
 
+    # ── Mobile Companion & Remote API Pairing Logic ──
+    def _populate_mobile(self) -> None:
+        while True:
+            child = self.mobile_box.get_first_child()
+            if not child:
+                break
+            self.mobile_box.remove(child)
+
+        from sayri import config as sayri_config
+        from sayri.api_server import PairingManager, get_api_server
+        import socket
+        import subprocess
+
+        cfg = getattr(self.app, "cfg", None) or sayri_config.config
+
+        # Get local IP
+        local_ip = "127.0.0.1"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass
+
+        # 1. API Status Card
+        srv_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        srv_card.add_css_class("sayri-card-item")
+
+        srv_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        srv_hdr.set_valign(Gtk.Align.CENTER)
+
+        srv_title = Gtk.Label()
+        srv_title.set_markup("<span weight='700' size='10000' foreground='#38bdf8'>SAYRI REMOTE API SERVER</span>")
+        srv_title.set_halign(Gtk.Align.START)
+        srv_title.set_hexpand(True)
+        srv_hdr.append(srv_title)
+
+        api_switch = Gtk.Switch()
+        api_enabled = cfg.get_boolean("api", "enabled", True) if cfg else True
+        api_switch.set_active(api_enabled)
+
+        def _on_api_toggle(_sw, state):
+            if cfg:
+                cfg.set_boolean("api", "enabled", state)
+            srv = get_api_server()
+            if state:
+                srv.start()
+                srv_status_lbl.set_markup(f"<span foreground='#34d399' size='8500'>● Active on <b>http://{local_ip}:8765</b> (OpenAI-compatible)</span>")
+            else:
+                srv.stop()
+                srv_status_lbl.set_markup("<span foreground='#94a3b8' size='8500'>○ Server stopped</span>")
+
+        api_switch.connect("state-set", _on_api_toggle)
+        srv_hdr.append(api_switch)
+        srv_card.append(srv_hdr)
+
+        srv_status_lbl = Gtk.Label()
+        if api_enabled:
+            srv_status_lbl.set_markup(f"<span foreground='#34d399' size='8500'>● Active on <b>http://{local_ip}:8765</b> (OpenAI-compatible)</span>")
+        else:
+            srv_status_lbl.set_markup("<span foreground='#94a3b8' size='8500'>○ Server stopped</span>")
+        srv_status_lbl.set_halign(Gtk.Align.START)
+        srv_card.append(srv_status_lbl)
+
+        self.mobile_box.append(srv_card)
+
+        # 2. Pairing PIN Card
+        pin_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        pin_card.add_css_class("sayri-card-item")
+        pin_card.set_margin_top(4)
+
+        pin_hdr = Gtk.Label()
+        pin_hdr.set_markup("<span weight='700' size='10000' foreground='#f8fafc'>PAIRING PIN CODE</span>")
+        pin_hdr.set_halign(Gtk.Align.START)
+        pin_card.append(pin_hdr)
+
+        current_pin = PairingManager.get_or_create_pin()
+
+        pin_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        pin_row.set_valign(Gtk.Align.CENTER)
+        pin_row.set_margin_top(4)
+        pin_row.set_margin_bottom(4)
+
+        pin_lbl = Gtk.Label()
+        pin_lbl.set_markup(f"<span size='20000' weight='bold' letter_spacing='4000' foreground='#38bdf8'><b>{current_pin}</b></span>")
+        pin_lbl.set_selectable(True)
+        pin_row.append(pin_lbl)
+
+        copy_pin_btn = Gtk.Button(label="Copy PIN")
+        copy_pin_btn.add_css_class("sayri-action-btn")
+        def _copy_pin(_b):
+            try:
+                subprocess.Popen(["wl-copy", str(current_pin)])
+            except Exception:
+                cb = Gdk.Display.get_default().get_clipboard()
+                cb.set(str(current_pin))
+            self.toast("PIN copied to clipboard")
+        copy_pin_btn.connect("clicked", _copy_pin)
+        pin_row.append(copy_pin_btn)
+
+        regen_pin_btn = Gtk.Button(label="Regenerate PIN")
+        regen_pin_btn.add_css_class("sayri-action-btn")
+        def _on_regen(_b):
+            nonlocal current_pin
+            current_pin = PairingManager.regenerate_pin()
+            pin_lbl.set_markup(f"<span size='20000' weight='bold' letter_spacing='4000' foreground='#38bdf8'><b>{current_pin}</b></span>")
+            self.toast("New PIN generated")
+        regen_pin_btn.connect("clicked", _on_regen)
+        pin_row.append(regen_pin_btn)
+
+        pin_card.append(pin_row)
+
+        pin_desc = Gtk.Label()
+        pin_desc.set_markup(
+            "<span size='8500' foreground='#94a3b8'>Enter this 6-digit PIN in the Sayri Mobile app on your Android device to securely pair it with your computer. Only paired devices can send commands to your local Sayri assistant.</span>"
+        )
+        pin_desc.set_halign(Gtk.Align.START)
+        pin_desc.set_wrap(True)
+        pin_card.append(pin_desc)
+
+        self.mobile_box.append(pin_card)
+
+        # 3. Paired Devices Card
+        dev_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        dev_card.add_css_class("sayri-card-item")
+        dev_card.set_margin_top(4)
+
+        paired = PairingManager.load_paired_devices()
+        dev_hdr = Gtk.Label()
+        dev_hdr.set_markup(f"<span weight='700' size='9500' foreground='#f8fafc'>PAIRED DEVICES ({len(paired)})</span>")
+        dev_hdr.set_halign(Gtk.Align.START)
+        dev_card.append(dev_hdr)
+
+        if not paired:
+            empty_dev = Gtk.Label(label="No mobile devices paired yet. Connect your phone by entering the PIN above.")
+            empty_dev.set_halign(Gtk.Align.START)
+            empty_dev.add_css_class("sayri-info-banner")
+            dev_card.append(empty_dev)
+        else:
+            for dev in paired:
+                d_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                d_row.set_valign(Gtk.Align.CENTER)
+
+                d_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                d_info.set_hexpand(True)
+
+                d_name = Gtk.Label()
+                d_name.set_markup(f"<span weight='600' size='9000' foreground='#e2e8f0'>{GLib.markup_escape_text(dev.get('name', 'Android Device'))}</span>")
+                d_name.set_halign(Gtk.Align.START)
+                d_info.append(d_name)
+
+                d_meta = Gtk.Label()
+                d_meta.set_markup(f"<span size='8000' foreground='#64748b'>ID: {dev.get('device_id', 'unknown')} • Paired: {dev.get('paired_at', 'recent')}</span>")
+                d_meta.set_halign(Gtk.Align.START)
+                d_info.append(d_meta)
+                d_row.append(d_info)
+
+                rev_btn = Gtk.Button(label="Revoke")
+                rev_btn.add_css_class("sayri-action-btn")
+                def _do_revoke(_b, t=dev.get("token")):
+                    PairingManager.revoke_device(t)
+                    self._populate_mobile()
+                    self.toast("Device revoked")
+                rev_btn.connect("clicked", _do_revoke)
+                d_row.append(rev_btn)
+
+                dev_card.append(d_row)
+
+        self.mobile_box.append(dev_card)
+
     # ── Automated Routines & Cron Jobs Logic ──
     def _populate_routines(self) -> None:
         while True:
@@ -3522,6 +3727,109 @@ class SayriCajita(Gtk.Box):
         sec_card.append(sec_sub)
 
         self.settings_box.append(sec_card)
+
+        # Section 4B: Remote API & Mobile Companion Pairing
+        api_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        api_card.add_css_class("sayri-card-item")
+        api_card.set_margin_top(8)
+
+        api_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        api_hdr.set_valign(Gtk.Align.CENTER)
+
+        api_title = Gtk.Label()
+        api_title.set_markup("<span weight='700' size='9500' foreground='#38bdf8'>REMOTE API &amp; MOBILE PAIRING</span>")
+        api_title.set_halign(Gtk.Align.START)
+        api_title.set_hexpand(True)
+        api_hdr.append(api_title)
+
+        from sayri import config as sayri_config
+        cfg = getattr(self.app, "cfg", None) or sayri_config.config
+
+        api_switch = Gtk.Switch()
+        api_enabled = cfg.get_boolean("api", "enabled", True) if cfg else True
+        api_switch.set_active(api_enabled)
+
+        def _on_api_toggled(_sw, state):
+            if cfg:
+                cfg.set_boolean("api", "enabled", state)
+            from sayri.api_server import get_api_server
+            srv = get_api_server()
+            if state:
+                srv.start()
+                api_status_lbl.set_markup("<span foreground='#34d399' size='8500'>● Active on port 8765</span>")
+            else:
+                srv.stop()
+                api_status_lbl.set_markup("<span foreground='#94a3b8' size='8500'>○ Server Stopped</span>")
+
+        api_switch.connect("state-set", _on_api_toggled)
+        api_hdr.append(api_switch)
+        api_card.append(api_hdr)
+
+        api_status_lbl = Gtk.Label()
+        api_status_lbl.set_markup("<span foreground='#34d399' size='8500'>● Active on port 8765 (OpenAI-compatible)</span>" if api_enabled else "<span foreground='#94a3b8' size='8500'>○ Server Stopped</span>")
+        api_status_lbl.set_halign(Gtk.Align.START)
+        api_card.append(api_status_lbl)
+
+        # Pairing PIN Box
+        pin_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        pin_box.set_margin_top(4)
+
+        from sayri.api_server import PairingManager
+        current_pin = PairingManager.get_or_create_pin()
+
+        pin_display_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        pin_display_box.set_valign(Gtk.Align.CENTER)
+
+        pin_lbl = Gtk.Label()
+        pin_lbl.set_markup(f"<span size='16000' weight='bold' letter_spacing='3000' foreground='#38bdf8'><b>{current_pin}</b></span>")
+        pin_lbl.set_selectable(True)
+        pin_display_box.append(pin_lbl)
+
+        regen_pin_btn = Gtk.Button(label="Regenerate PIN")
+        regen_pin_btn.add_css_class("sayri-action-btn")
+        def _on_regen_pin(_b):
+            new_pin = PairingManager.regenerate_pin()
+            pin_lbl.set_markup(f"<span size='16000' weight='bold' letter_spacing='3000' foreground='#38bdf8'><b>{new_pin}</b></span>")
+        regen_pin_btn.connect("clicked", _on_regen_pin)
+        pin_display_box.append(regen_pin_btn)
+        pin_box.append(pin_display_box)
+
+        pin_desc = Gtk.Label()
+        pin_desc.set_markup(
+            "<span size='8500' foreground='#94a3b8'>Enter this 6-digit PIN in Sayri Mobile on your Android device to securely pair it with your computer. Only paired devices can access your Sayri assistant over the local network.</span>"
+        )
+        pin_desc.set_halign(Gtk.Align.START)
+        pin_desc.set_wrap(True)
+        pin_box.append(pin_desc)
+
+        # Paired devices list
+        paired = PairingManager.load_paired_devices()
+        paired_count_lbl = Gtk.Label()
+        paired_count_lbl.set_markup(f"<span size='8500' weight='600' foreground='#e2e8f0'>Paired Devices: {len(paired)}</span>")
+        paired_count_lbl.set_halign(Gtk.Align.START)
+        paired_count_lbl.set_margin_top(4)
+        pin_box.append(paired_count_lbl)
+
+        if paired:
+            for dev in paired:
+                dev_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                dev_lbl = Gtk.Label()
+                dev_lbl.set_markup(f"<span size='8500' foreground='#94a3b8'>Device: {GLib.markup_escape_text(dev.get('name', 'Android'))}</span>")
+                dev_lbl.set_hexpand(True)
+                dev_lbl.set_halign(Gtk.Align.START)
+                dev_row.append(dev_lbl)
+
+                revoke_btn = Gtk.Button(label="Revoke")
+                revoke_btn.add_css_class("sayri-action-btn")
+                def _revoke(_b, tok=dev.get("token")):
+                    PairingManager.revoke_device(tok)
+                    self._populate_settings()
+                revoke_btn.connect("clicked", _revoke)
+                dev_row.append(revoke_btn)
+                pin_box.append(dev_row)
+
+        api_card.append(pin_box)
+        self.settings_box.append(api_card)
 
         # Section 5: System Daemons & Process Management
         sys_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)

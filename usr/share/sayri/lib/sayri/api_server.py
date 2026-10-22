@@ -9,10 +9,16 @@ Provides a zero-dependency, asynchronous multi-threaded API server exposing:
 
 from __future__ import annotations
 
+import base64
 import datetime
 import json
 import os
+import random
+import secrets
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -28,6 +34,93 @@ from sayri.domain.models import SandboxLevel
 _SERVER_INSTANCE: Optional["SayriApiServer"] = None
 
 
+class PairingManager:
+    """Manages 6-digit PIN desktop pairing and authorized device tokens."""
+    _current_pin: str = ""
+    _pin_created_at: float = 0.0
+
+    @classmethod
+    def get_paired_devices_file(cls) -> Path:
+        d = Path(paths.config_dir())
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "paired_devices.json"
+
+    @classmethod
+    def load_paired_devices(cls) -> List[Dict[str, Any]]:
+        f = cls.get_paired_devices_file()
+        if f.is_file():
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                return data.get("devices", [])
+            except Exception:
+                pass
+        return []
+
+    @classmethod
+    def save_paired_devices(cls, devices: List[Dict[str, Any]]) -> None:
+        f = cls.get_paired_devices_file()
+        f.write_text(json.dumps({"devices": devices}, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def get_pin_file(cls) -> Path:
+        d = Path(paths.config_dir())
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "pairing_pin.json"
+
+    @classmethod
+    def get_or_create_pin(cls) -> str:
+        f = cls.get_pin_file()
+        now = time.time()
+        if f.is_file():
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                pin = str(data.get("pin", "")).strip()
+                created = float(data.get("created_at", 0))
+                if pin and (now - created) < 86400:
+                    return pin
+            except Exception:
+                pass
+        return cls.regenerate_pin()
+
+    @classmethod
+    def regenerate_pin(cls) -> str:
+        pin = f"{random.randint(100000, 999999):06d}"
+        now = time.time()
+        f = cls.get_pin_file()
+        f.write_text(json.dumps({"pin": pin, "created_at": now}), encoding="utf-8")
+        return pin
+
+    @classmethod
+    def pair_device(cls, pin: str, device_name: str, device_id: str = "") -> Optional[str]:
+        current = cls.get_or_create_pin()
+        if not pin or pin.strip() != current:
+            return None
+        token = f"sayri_tok_{secrets.token_hex(20)}"
+        devices = cls.load_paired_devices()
+        devices = [d for d in devices if d.get("device_id") != device_id or not device_id]
+        devices.append({
+            "token": token,
+            "name": device_name or "Android Device",
+            "device_id": device_id,
+            "paired_at": datetime.datetime.now().isoformat(),
+        })
+        cls.save_paired_devices(devices)
+        return token
+
+    @classmethod
+    def is_token_valid(cls, token: str) -> bool:
+        if not token:
+            return False
+        devices = cls.load_paired_devices()
+        return any(d.get("token") == token for d in devices)
+
+    @classmethod
+    def revoke_device(cls, token: str) -> None:
+        devices = cls.load_paired_devices()
+        devices = [d for d in devices if d.get("token") != token]
+        cls.save_paired_devices(devices)
+
+
 class SayriApiHandler(BaseHTTPRequestHandler):
     """Handles incoming HTTP requests for OpenAI API and Sayri Native Endpoints."""
 
@@ -40,8 +133,8 @@ class SayriApiHandler(BaseHTTPRequestHandler):
 
     def _send_cors_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Session-ID, X-Device-Name")
 
     def do_OPTIONS(self) -> None:
         """Handle CORS pre-flight requests."""
@@ -51,21 +144,41 @@ class SayriApiHandler(BaseHTTPRequestHandler):
 
     def _is_authorized(self) -> bool:
         cfg = self.server_cfg or getattr(sayri_config, "config", None)
+        # If API is disabled in config, reject requests
+        if cfg and not cfg.get_boolean("api", "enabled", True):
+            return False
+
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        # Status and pairing endpoints are public for discovery & pairing
+        if path in ("/api/v1/status", "/api/v1/pair"):
+            return True
+
         expected_key = cfg.get_string("api", "api_key", "").strip() if cfg else ""
-        if not expected_key:
-            return True  # Zero auth required when no API key configured
 
         # Check Authorization: Bearer <key>
         auth_hdr = self.headers.get("Authorization", "")
+        token = ""
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr.split("Bearer ", 1)[1].strip()
-            if token == expected_key:
-                return True
 
         # Check query string parameter: ?key=<key>
-        parsed = urllib.parse.urlparse(self.path)
-        qs = urllib.parse.parse_qs(parsed.query)
-        if qs.get("key") and qs["key"][0] == expected_key:
+        if not token:
+            qs = urllib.parse.parse_qs(parsed.query)
+            if qs.get("key"):
+                token = qs["key"][0]
+
+        # 1. Matches static api_key if configured
+        if expected_key and token == expected_key:
+            return True
+
+        # 2. Matches paired device bearer token
+        if PairingManager.is_token_valid(token):
+            return True
+
+        # 3. If pairing is disabled and no static key is configured
+        require_pairing = cfg.get_boolean("api", "require_pairing", True) if cfg else True
+        if not require_pairing and not expected_key:
             return True
 
         return False
@@ -126,6 +239,40 @@ class SayriApiHandler(BaseHTTPRequestHandler):
             self._handle_get_tomorrow()
             return
 
+        # 6. Audio Speech synthesis: /v1/audio/speech
+        if path == "/v1/audio/speech":
+            params = urllib.parse.parse_qs(parsed.query)
+            text = params.get("text", [""])[0] or params.get("input", [""])[0]
+            self._handle_audio_speech(text)
+            return
+
+        # 7. Sessions List: /api/v1/sessions
+        if path == "/api/v1/sessions":
+            self._handle_get_sessions()
+            return
+
+        # 8. Session Detail: /api/v1/sessions/<id>
+        if path.startswith("/api/v1/sessions/"):
+            session_id = path[len("/api/v1/sessions/"):]
+            self._handle_get_session_by_id(session_id)
+            return
+
+        self._send_error(404, f"Endpoint not found: {path}")
+
+    # ------------------------------------------------------------- DELETE
+    def do_DELETE(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+
+        if not self._is_authorized():
+            self._send_error(401, "Unauthorized: Invalid or missing API Key.")
+            return
+
+        if path.startswith("/api/v1/sessions/"):
+            session_id = path[len("/api/v1/sessions/"):]
+            self._handle_delete_session(session_id)
+            return
+
         self._send_error(404, f"Endpoint not found: {path}")
 
     # ------------------------------------------------------------- POST
@@ -135,6 +282,21 @@ class SayriApiHandler(BaseHTTPRequestHandler):
 
         if not self._is_authorized():
             self._send_error(401, "Unauthorized: Invalid or missing API Key.")
+            return
+
+        # Audio Transcription (STT with Whisper): /v1/audio/transcriptions
+        if path == "/v1/audio/transcriptions":
+            content_type = self.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                body = self._read_json_body()
+                self._handle_audio_transcription(b"", is_json=True, json_obj=body)
+            else:
+                try:
+                    content_length = int(self.headers.get("Content-Length", 0))
+                    raw_audio = self.rfile.read(content_length) if content_length > 0 else b""
+                    self._handle_audio_transcription(raw_audio, is_json=False)
+                except Exception as e:
+                    self._send_error(400, f"Failed reading audio stream: {e}")
             return
 
         body = self._read_json_body()
@@ -147,24 +309,40 @@ class SayriApiHandler(BaseHTTPRequestHandler):
             self._handle_chat_completions(body)
             return
 
+        # 1B. Create Session: /api/v1/sessions
+        if path == "/api/v1/sessions":
+            self._handle_create_session(body)
+            return
+
         # 2. Native Query Endpoint: /api/v1/query
         if path == "/api/v1/query":
             self._handle_native_query(body)
             return
 
-        # 3. Native Memory Ideas Append: /api/v1/memory/ideas
+        # 3. Audio Speech synthesis: /v1/audio/speech
+        if path == "/v1/audio/speech":
+            text = str(body.get("input") or body.get("text") or "")
+            self._handle_audio_speech(text)
+            return
+
+        # 4. Native Memory Ideas Append: /api/v1/memory/ideas
         if path == "/api/v1/memory/ideas":
             self._handle_post_ideas(body)
             return
 
-        # 4. Native Memory Tomorrow Append: /api/v1/memory/tomorrow
+        # 5. Native Memory Tomorrow Append: /api/v1/memory/tomorrow
         if path == "/api/v1/memory/tomorrow":
             self._handle_post_tomorrow(body)
             return
 
-        # 5. Mobile Accessibility Action: /api/v1/mobile/action
+        # 6. Mobile Accessibility Action: /api/v1/mobile/action
         if path == "/api/v1/mobile/action":
             self._handle_mobile_action(body)
+            return
+
+        # 7. Device PIN Pairing: /api/v1/pair
+        if path == "/api/v1/pair":
+            self._handle_post_pair(body)
             return
 
         self._send_error(404, f"Endpoint not found: {path}")
@@ -203,8 +381,27 @@ class SayriApiHandler(BaseHTTPRequestHandler):
             "skills_count": len(installed_skills),
             "uptime_seconds": round(uptime, 1),
             "platform": sysinfo.os_name(),
+            "pairing_required": True,
         }
         self._send_json(200, data)
+
+    def _handle_post_pair(self, body: Dict[str, Any]) -> None:
+        pin = str(body.get("pin") or "").strip()
+        device_name = str(body.get("device_name") or "Android Device").strip()
+        device_id = str(body.get("device_id") or "").strip()
+
+        token = PairingManager.pair_device(pin, device_name, device_id)
+        if not token:
+            self._send_error(401, "PIN incorrecto o caducado. Comprueba el código mostrado en Sayri Desktop.")
+            return
+
+        self._send_json(200, {
+            "ok": True,
+            "token": token,
+            "device_name": device_name,
+            "server_name": "Pulsar OS",
+            "message": "Dispositivo emparejado con éxito.",
+        })
 
     def _handle_get_agents(self) -> None:
         agents = AgentCreator.list_agents()
@@ -273,38 +470,134 @@ class SayriApiHandler(BaseHTTPRequestHandler):
 
         self._send_json(200, {"ok": True, "message": f"Task scheduled for tomorrow: {task_text}"})
 
+    def _handle_get_sessions(self) -> None:
+        core = self.server_core
+        if not core:
+            from sayri.core import SayriCore
+            core = SayriCore.get_instance()
+        if not core:
+            self._send_error(503, "Sayri Core is not running.")
+            return
+
+        sessions = core.storage.list_sessions(limit=50, include_empty=False)
+        data = []
+        for s in sessions:
+            data.append({
+                "id": s.id,
+                "title": s.title,
+                "agent_id": s.agent_id,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+                "msg_count": len(s.messages),
+            })
+        self._send_json(200, {"sessions": data})
+
+    def _handle_get_session_by_id(self, session_id: str) -> None:
+        core = self.server_core
+        if not core:
+            from sayri.core import SayriCore
+            core = SayriCore.get_instance()
+        if not core:
+            self._send_error(503, "Sayri Core is not running.")
+            return
+
+        session = core.storage.get_session(session_id)
+        if not session:
+            self._send_error(404, f"Session not found: {session_id}")
+            return
+
+        msgs = []
+        for m in session.messages:
+            msgs.append({
+                "role": m.role,
+                "content": m.content,
+                "timestamp": getattr(m, "timestamp", 0),
+            })
+        self._send_json(200, {
+            "session": {
+                "id": session.id,
+                "title": session.title,
+                "agent_id": session.agent_id,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+                "messages": msgs,
+            }
+        })
+
+    def _handle_create_session(self, body: Dict[str, Any]) -> None:
+        core = self.server_core
+        if not core:
+            from sayri.core import SayriCore
+            core = SayriCore.get_instance()
+        if not core:
+            self._send_error(503, "Sayri Core is not running.")
+            return
+
+        title = str(body.get("title") or "New Mobile Chat").strip()
+        custom_id = str(body.get("session_id") or "").strip()
+        sid = custom_id if custom_id else f"mobile-{int(time.time()*1000)}"
+        if not sid.startswith("mobile-"):
+            sid = f"mobile-{sid}"
+        sess = core.storage.create_session(agent_id="default", title=title, session_id=sid)
+        self._send_json(200, {"session_id": sess.id, "title": sess.title})
+
+    def _handle_delete_session(self, session_id: str) -> None:
+        core = self.server_core
+        if not core:
+            from sayri.core import SayriCore
+            core = SayriCore.get_instance()
+        if not core:
+            self._send_error(503, "Sayri Core is not running.")
+            return
+
+        core.storage.delete_session(session_id)
+        self._send_json(200, {"ok": True, "deleted": session_id})
+
     def _handle_chat_completions(self, body: Dict[str, Any]) -> None:
         messages = body.get("messages", [])
         if not messages:
             self._send_error(400, "Field 'messages' is required.")
             return
 
-        def _extract_text(content: Any) -> str:
+        # Extract or assign session_id
+        session_id = str(body.get("session_id") or "").strip()
+        if not session_id:
+            session_id = self.headers.get("X-Session-ID", "").strip()
+        if not session_id:
+            session_id = f"mobile-{int(time.time()*1000)}"
+        elif not session_id.startswith("mobile-"):
+            session_id = f"mobile-{session_id}"
+
+        def _extract_text_and_images(content: Any) -> Tuple[str, List[str]]:
             if isinstance(content, str):
-                return content
+                return content, []
             if isinstance(content, list):
                 parts = []
+                imgs = []
                 for p in content:
-                    if isinstance(p, dict) and p.get("type") == "text":
-                        parts.append(p.get("text", ""))
+                    if isinstance(p, dict):
+                        if p.get("type") == "text":
+                            parts.append(p.get("text", ""))
+                        elif p.get("type") == "image_url":
+                            url = p.get("image_url", {}).get("url", "")
+                            if url:
+                                imgs.append(url)
                     elif isinstance(p, str):
                         parts.append(p)
-                return " ".join(parts)
-            return str(content or "")
+                return " ".join(parts), imgs
+            return str(content or ""), []
 
         last_user_msg = ""
+        last_images: List[str] = []
         for m in reversed(messages):
             if m.get("role") == "user":
-                last_user_msg = _extract_text(m.get("content", ""))
+                last_user_msg, last_images = _extract_text_and_images(m.get("content", ""))
                 break
-
-        if not last_user_msg:
-            last_user_msg = _extract_text(messages[-1].get("content", ""))
 
         target_model = str(body.get("model", "default")).lower().strip()
         stream = bool(body.get("stream", False))
         created_ts = int(time.time())
-        chat_id = f"chatcmpl-{int(time.time()*1000)}"
+        chat_id = session_id
 
         target_agent = target_model if target_model not in ("sayri", "default") else "default"
 
@@ -322,10 +615,15 @@ class SayriApiHandler(BaseHTTPRequestHandler):
             self._send_error(503, "Sayri Core is not running or available.")
             return
 
+        final_prompt = last_user_msg
+        if last_images:
+            img_prefix = f"[Image Attached: {len(last_images)} photo(s) provided for mobile vision analysis]\n"
+            final_prompt = f"{img_prefix}{final_prompt}"
+
         if stream:
-            self._handle_chat_completions_stream(core, last_user_msg, target_agent, sandbox_level, chat_id, target_model, created_ts)
+            self._handle_chat_completions_stream(core, final_prompt, target_agent, sandbox_level, chat_id, target_model, created_ts)
         else:
-            self._handle_chat_completions_sync(core, last_user_msg, target_agent, sandbox_level, chat_id, target_model, created_ts)
+            self._handle_chat_completions_sync(core, final_prompt, target_agent, sandbox_level, chat_id, target_model, created_ts)
 
     def _handle_chat_completions_stream(
         self,
@@ -352,11 +650,14 @@ class SayriApiHandler(BaseHTTPRequestHandler):
             except OSError:
                 pass
 
+        total_deltas: list[str] = []
+
         def _on_event(ev: dict) -> None:
             ev_name = ev.get("event")
             if ev_name == "delta":
                 delta_content = ev.get("delta", "")
                 if delta_content:
+                    total_deltas.append(delta_content)
                     chunk = {
                         "id": chat_id,
                         "object": "chat.completion.chunk",
@@ -371,14 +672,32 @@ class SayriApiHandler(BaseHTTPRequestHandler):
                         ],
                     }
                     _send_sse(chunk)
+            elif ev_name == "done":
+                done_text = ev.get("text", "")
+                if not total_deltas and done_text:
+                    total_deltas.append(done_text)
+                    chunk = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": model_name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": done_text},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    _send_sse(chunk)
 
         core.process_remote_message(
             text=prompt,
-            author="api_client",
+            author="mobile_user",
             target_agent_id=agent_id,
             sandbox_level=sandbox_level,
-            instance_id="sayri-api",
-            session_id=f"api-{chat_id}",
+            instance_id="sayri-mobile",
+            session_id=chat_id,
             on_event=_on_event,
         )
 
@@ -416,11 +735,11 @@ class SayriApiHandler(BaseHTTPRequestHandler):
     ) -> None:
         result = core.process_remote_message(
             text=prompt,
-            author="api_client",
+            author="mobile_user",
             target_agent_id=agent_id,
             sandbox_level=sandbox_level,
-            instance_id="sayri-api",
-            session_id=f"api-{chat_id}",
+            instance_id="sayri-mobile",
+            session_id=chat_id,
         )
 
         response = {
@@ -445,6 +764,131 @@ class SayriApiHandler(BaseHTTPRequestHandler):
             },
         }
         self._send_json(200, response)
+
+    def _handle_audio_speech(self, text: str) -> None:
+        clean_text = text.strip()
+        if not clean_text:
+            self._send_error(400, "Parameter 'text' or 'input' is required.")
+            return
+
+        from sayri.tts import TTSEngine
+        cfg = self.server_cfg or getattr(sayri_config, "config", None)
+        tts = TTSEngine(cfg)
+
+        binary = tts.binary
+        voices = tts.voice_files
+        if not binary or not voices:
+            self._send_error(503, "TTS Engine (Piper) not ready on Sayri host.")
+            return
+
+        onnx, json_path = voices
+        speed = max(0.1, float(cfg.get_float("tts", "speed"))) if cfg else 1.0
+        length_scale = 1.0 / speed
+        wav_out = os.path.join(paths.tmp_dir(), f"api-tts-{secrets.token_hex(4)}.wav")
+
+        bin_dir = paths.bin_dir()
+        env = dict(os.environ)
+        cur_ld = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{bin_dir}:{os.path.dirname(binary)}:{cur_ld}".rstrip(":")
+        espeak_data = os.path.join(bin_dir, "espeak-ng-data")
+
+        try:
+            cmd = [binary, "--model", onnx, "--output_file", wav_out]
+            if json_path:
+                cmd += ["--config", json_path]
+            if os.path.isdir(espeak_data):
+                cmd += ["--espeak_data", espeak_data]
+            cmd += ["--length_scale", f"{length_scale:.3f}"]
+
+            proc = subprocess.run(
+                cmd,
+                input=clean_text.encode("utf-8"),
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+            if proc.returncode != 0 or not os.path.isfile(wav_out):
+                err = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+                self._send_error(500, f"Piper synthesis failed: {err[:200]}")
+                return
+
+            with open(wav_out, "rb") as f:
+                data = f.read()
+
+            try:
+                os.remove(wav_out)
+            except Exception:
+                pass
+
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(data)))
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self._send_error(500, f"Error generating speech: {e}")
+
+    def _handle_audio_transcription(self, body_bytes: bytes, is_json: bool = False, json_obj: Optional[Dict[str, Any]] = None) -> None:
+        """Transcribes incoming audio using local whisper-cli and model."""
+        audio_data = b""
+        language = "auto"
+        if is_json and json_obj:
+            b64 = json_obj.get("audio", "")
+            if b64:
+                try:
+                    audio_data = base64.b64decode(b64)
+                except Exception:
+                    pass
+            language = json_obj.get("language", "auto")
+        else:
+            audio_data = body_bytes
+
+        if not audio_data:
+            self._send_error(400, "No audio data provided.")
+            return
+
+        whisper_bin = (
+            paths.find_binary("whisper-cli")
+            or shutil.which("whisper-cli")
+            or os.path.expanduser("~/.local/share/sayri/bin/whisper-cli")
+        )
+        model_path = os.path.expanduser("~/.local/share/sayri/models/ggml-tiny.bin")
+        if not os.path.isfile(model_path):
+            from sayri import downloads
+            model_path = downloads.whisper_model_path("tiny", "es")
+
+        if not os.path.isfile(whisper_bin) or not os.path.isfile(model_path):
+            self._send_error(503, "Whisper binary or model not installed on Sayri server.")
+            return
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_f:
+            tmp_f.write(audio_data)
+            tmp_wav = tmp_f.name
+
+        try:
+            cmd = [
+                whisper_bin,
+                "-m", model_path,
+                "-f", tmp_wav,
+                "--no-timestamps",
+                "-np",
+                "-l", language
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            raw_text = res.stdout.strip()
+            # Filter hallucinations / ghosts
+            clean_text = raw_text
+            for ghost in ["[BLANK_AUDIO]", "Subtítulos por", "Subtítulos realizados", "Amara.org", "(música)", "[música]", "you"]:
+                clean_text = clean_text.replace(ghost, "").strip()
+            self._send_json(200, {"text": clean_text})
+        except Exception as e:
+            self._send_error(500, f"Error transcribing audio: {e}")
+        finally:
+            try:
+                os.remove(tmp_wav)
+            except Exception:
+                pass
 
     def _handle_native_query(self, body: Dict[str, Any]) -> None:
         prompt = str(body.get("prompt") or body.get("text") or "").strip()
@@ -530,6 +974,10 @@ class SayriApiServer:
     def start(self) -> bool:
         if self.running:
             return True
+
+        if self.cfg and not self.cfg.get_boolean("api", "enabled", True):
+            print("[Sayri API] ⏸️ Remote API & OpenAI server is disabled in settings.")
+            return False
 
         host = "0.0.0.0"
         port = 8765

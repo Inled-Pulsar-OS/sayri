@@ -625,7 +625,7 @@ class SayriCore:
                 # seconds waited on below.
                 approvable=False,
             )
-            done_event.wait(timeout=45.0)
+            done_event.wait(timeout=180.0)
 
             final_reply = result_holder["text"].strip()
             if not final_reply and result_holder["error"]:
